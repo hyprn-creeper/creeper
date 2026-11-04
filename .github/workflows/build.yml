@@ -92,7 +92,7 @@ jobs:
           mkdir -p /tmp/up
           sudo chroot "$R" /usr/bin/env -i PATH=/usr/bin:/usr/sbin /usr/bin/creeper index > /tmp/new-index.txt
           # новые = файлов нет в старом индексе (или пересобраны с другой суммой)
-          awk 'NR==FNR{old[$5]=$4; next} !($5 in old) || old[$5]!=$4 {print $5}' /tmp/old/index.txt /tmp/new-index.txt > /tmp/new-files
+          awk 'FILENAME==ARGV[1]{old[$5]=$4; next} !($5 in old) || old[$5]!=$4 {print $5}' /tmp/old/index.txt /tmp/new-index.txt > /tmp/new-files
           echo "новые бинарники:"; cat /tmp/new-files
           while read -r f; do sudo cp "$R/var/cache/creeper/bin/$f" /tmp/up/; done < /tmp/new-files
           # общий индекс: старые строки + новые (по имени файла новые главнее)
