@@ -1,0 +1,31 @@
+name=p11-kit
+version=0.25.5
+desc="хранилище доверенных сертификатов (PKCS#11)"
+url=https://p11-glue.github.io/p11-glue/p11-kit.html
+source=(https://github.com/p11-glue/p11-kit/releases/download/$version/p11-kit-$version.tar.xz)
+sha256=(04d0a86450cdb1be018f26af6699857171a188ac6d5b8c90786a60854e1198e5)
+depends=(libtasn1)
+
+prepare() {
+  # как в BLFS: trust-extract-compat вызывает make-ca
+  sed '20,$ d' -i trust/trust-extract-compat
+  cat >> trust/trust-extract-compat << "EOT"
+# Copy existing anchor modifications to /etc/ssl/local
+/usr/libexec/make-ca/copy-trust-modifications
+
+# Update trust stores
+/usr/sbin/make-ca -r
+EOT
+}
+build() {
+  mkdir -p p11-build && cd p11-build
+  meson setup .. --prefix=/usr --buildtype=release -D trust_paths=/etc/pki/anchors
+  ninja
+}
+check()   { cd p11-build && LC_ALL=C ninja test; }
+package() {
+  cd p11-build
+  DESTDIR="$PKG" ninja install
+  ln -sf /usr/libexec/p11-kit/trust-extract-compat "$PKG/usr/bin/update-ca-certificates"
+  ln -sf ./pkcs11/p11-kit-trust.so "$PKG/usr/lib/libnssckbi.so"
+}

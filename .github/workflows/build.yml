@@ -1,0 +1,106 @@
+# Сборочная ферма creeper: собирает пакеты в копии твоей LFS
+# и выкладывает бинарники в релиз "bin".
+# Запуск: вкладка Actions → build → Run workflow (или: gh workflow run build.yml -f packages="git")
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Пакеты через пробел (например: git openssh)"
+        required: true
+        type: string
+      rebuild:
+        description: "Пересобрать, даже если бинарник уже есть"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: creeper-build        # по одной сборке за раз — пакеты строятся поверх друг друга
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PKGS: ${{ inputs.packages }}
+      REBUILD: ${{ inputs.rebuild }}
+      BINREPO: https://github.com/${{ github.repository }}/releases/download/bin
+      R: /lfs
+    steps:
+      - name: Проверка списка пакетов
+        run: |
+          [[ "$PKGS" =~ ^[a-z0-9][a-z0-9._+\ -]*$ ]] || { echo "плохие имена пакетов: $PKGS"; exit 1; }
+
+      - name: Освободить место на сервере
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: Образ LFS (релиз base)
+        run: |
+          gh release download base -p 'lfs-builder.tar.zst' -D /tmp
+          sudo mkdir -p "$R"
+          zstd -dc /tmp/lfs-builder.tar.zst | sudo tar -C "$R" -xpf -
+          rm /tmp/lfs-builder.tar.zst
+          sudo du -sh "$R"
+
+      - name: Подготовка chroot
+        run: |
+          sudo install -m755 creeper "$R/usr/bin/creeper"
+          sudo rm -rf "$R/var/lib/creeper/recipes"
+          sudo mkdir -p "$R/var/lib/creeper"
+          sudo cp -r recipes "$R/var/lib/creeper/recipes"
+          printf 'MAKEFLAGS="-j%s"\nCREEPER_KEEPBIN=1\nCREEPER_STRIP=1\nBINREPO="%s"\n' "$(nproc)" "$BINREPO" | sudo tee "$R/etc/creeper.conf"
+          sudo cp -L /etc/resolv.conf "$R/etc/resolv.conf"
+          sudo mount --bind /dev "$R/dev"
+          sudo mount -t devpts devpts -o gid=5,mode=0620 "$R/dev/pts"
+          sudo mount -t proc proc "$R/proc"
+          sudo mount -t sysfs sysfs "$R/sys"
+          sudo mount -t tmpfs tmpfs "$R/run"
+          # бинарники, которые уже есть в репозитории, — чтобы не грузить их обратно
+          gh release download bin -p index.txt -D /tmp/old 2>/dev/null || mkdir -p /tmp/old
+          touch /tmp/old/index.txt
+          echo "в репозитории уже: $(wc -l < /tmp/old/index.txt) пакетов"
+
+      - name: Сборка
+        run: |
+          flags=""; [ "$REBUILD" = "true" ] && flags="--rebuild"
+          sudo chroot "$R" /usr/bin/env -i HOME=/root TERM=dumb PATH=/usr/bin:/usr/sbin \
+            /bin/bash -c "creeper install $flags $PKGS"
+
+      - name: Логи сборки
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: /lfs/var/log/creeper/
+          if-no-files-found: ignore
+
+      - name: Публикация бинарников
+        run: |
+          mkdir -p /tmp/up
+          sudo chroot "$R" /usr/bin/env -i PATH=/usr/bin:/usr/sbin /usr/bin/creeper index > /tmp/new-index.txt
+          # новые = файлов нет в старом индексе (или пересобраны с другой суммой)
+          awk 'NR==FNR{old[$5]=$4; next} !($5 in old) || old[$5]!=$4 {print $5}' /tmp/old/index.txt /tmp/new-index.txt > /tmp/new-files
+          echo "новые бинарники:"; cat /tmp/new-files
+          while read -r f; do sudo cp "$R/var/cache/creeper/bin/$f" /tmp/up/; done < /tmp/new-files
+          # общий индекс: старые строки + новые (по имени файла новые главнее)
+          awk '{line[$5]=$0} END{for (f in line) print line[f]}' /tmp/old/index.txt /tmp/new-index.txt | sort > /tmp/up/index.txt
+          tar -czf /tmp/up/recipes.tar.gz recipes
+          gh release view bin >/dev/null 2>&1 || gh release create bin --title "creeper: бинарные пакеты" \
+            --notes "Готовые пакеты для Hyprn LFS. Ставить: sudo creeper install <пакет>"
+          gh release upload bin /tmp/up/* --clobber
+          ls -lh /tmp/up
+
+      - name: Размонтировать
+        if: always()
+        run: |
+          for m in run sys proc dev/pts dev; do sudo umount "$R/$m" 2>/dev/null || true; done

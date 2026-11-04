@@ -1,0 +1,595 @@
+#!/bin/bash
+# creeper — маленький пакетный менеджер для Hyprn LFS
+#   creeper install <пакет...>   собрать и установить (с зависимостями)
+#   creeper blow <пакет...>      взорвать (удалить) пакет
+#   creeper list | info | files | owns | search | fetch | upgrade | help
+#
+# Рецепты:   /var/lib/creeper/recipes/<пакет>/recipe
+# Установлено: /var/lib/creeper/installed/<пакет>/{version,files,dirs,depends,date,recipe}
+
+CREEPER_VERSION=0.2
+
+# ROOT пустой = установка в настоящую систему. CREEPER_ROOT — только для тестов.
+ROOT=${CREEPER_ROOT:-}
+CONF=$ROOT/etc/creeper.conf
+[ -r "$CONF" ] && . "$CONF"
+
+RECIPES=${RECIPES:-$ROOT/var/lib/creeper/recipes}
+DB=$ROOT/var/lib/creeper/installed
+SUMS=$ROOT/var/lib/creeper/sums
+SOURCES=${SOURCES:-$ROOT/var/cache/creeper/sources}
+WORK=${WORK:-$ROOT/var/tmp/creeper}
+BINCACHE=${BINCACHE:-$ROOT/var/cache/creeper/bin}
+: "${BINREPO:=}"            # напр. https://github.com/USER/creeper/releases/download/bin
+: "${CREEPER_KEEPBIN:=1}"   # 1 = сохранять собранные пакеты в $BINCACHE
+LOGS=$ROOT/var/log/creeper
+: "${MAKEFLAGS:=-j$(nproc)}"
+: "${CREEPER_STRIP:=1}"
+: "${CREEPER_CHECK:=0}"
+export MAKEFLAGS
+
+# ---------- оформление ----------
+if [ -t 1 ]; then G=$'\e[1;32m'; R=$'\e[1;31m'; Y=$'\e[1;33m'; B=$'\e[1m'; N=$'\e[0m'
+else G=; R=; Y=; B=; N=; fi
+say()  { printf '%s==>%s %s\n' "$G" "$N" "$*"; }
+info() { printf '    %s\n' "$*"; }
+warn() { printf '%s!!>%s %s\n' "$Y" "$N" "$*" >&2; }
+die()  { printf '%sxx>%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
+
+usage() {
+cat <<EOF
+${G}creeper${N} $CREEPER_VERSION — Ссссс... пакетный менеджер Hyprn LFS
+
+  creeper install <пакет...>   собрать и установить вместе с зависимостями
+          --rebuild             пересобрать, даже если уже стоит
+          --source              только сборка из исходников (без бинарников)
+          --check               запустить тесты пакета (если есть в рецепте)
+  creeper blow <пакет...>      взорвать (удалить) пакет
+          --force               даже если от него зависят другие
+          --purge               удалить и сохранённые конфиги (backup)
+  creeper upgrade              пересобрать пакеты, у которых рецепт новее
+  creeper fetch <пакет...>     только скачать (бинарники/исходники) — потом можно без сети
+  creeper sync                 обновить рецепты из репозитория
+  creeper pack <пакет>         сделать бинарник из установленного пакета
+  creeper index                строки index.txt для репозитория
+  creeper list                 установленные пакеты
+  creeper search [слово]       доступные рецепты
+  creeper info <пакет>         сведения о пакете
+  creeper files <пакет>        файлы пакета
+  creeper owns <файл>          какому пакету принадлежит файл
+
+  Рецепты:  $RECIPES/<пакет>/recipe
+  Бинарники: $BINCACHE   Репозиторий: ${BINREPO:-не задан}
+  Логи:     $LOGS/<пакет>.log
+EOF
+}
+
+need_root() { [ "$(id -u)" -eq 0 ] || die "нужны права root: sudo creeper $*"; }
+
+lock() {
+  mkdir -p "$ROOT/run" 2>/dev/null
+  exec 9>"$ROOT/run/creeper.lock" || die "не могу создать замок"
+  flock -n 9 || die "creeper уже работает в другом окне"
+}
+
+# /bin /sbin /lib в LFS — ссылки на /usr/...; храним пути в одном виде
+normalize() { sed -e 's#^/bin/#/usr/bin/#' -e 's#^/sbin/#/usr/sbin/#' -e 's#^/lib/#/usr/lib/#'; }
+
+recipe_file() { echo "$RECIPES/$1/recipe"; }
+have_recipe() { [ -r "$(recipe_file "$1")" ]; }
+installed()   { [ -f "$DB/$1/version" ]; }
+inst_version(){ cat "$DB/$1/version" 2>/dev/null; }
+
+# значение переменной/массива из рецепта (в подоболочке, чтобы не мусорить)
+meta() { meta_f "$(recipe_file "$1")" "$2"; }
+meta_f() { # meta_f <файл-рецепта> <переменная>   (массивы — по элементу на строку)
+  ( . "$1" >/dev/null 2>&1 || exit 1
+    declare -n v="$2" 2>/dev/null || exit 0
+    if [ "$(declare -p "$2" 2>/dev/null | cut -c1-10)" = "declare -a" ]; then
+      [ ${#v[@]} -gt 0 ] && printf '%s\n' "${v[@]}"
+    else
+      [ -n "${v:-}" ] && printf '%s\n' "$v"
+    fi )
+}
+
+# source-строка:  "имя::url"  или просто "url"
+src_name() { case $1 in *::*) echo "${1%%::*}";; *) basename "${1%%\?*}";; esac; }
+src_url()  { case $1 in *::*) echo "${1#*::}";; *) echo "$1";; esac; }
+
+# ---------- зависимости ----------
+RESOLVED=(); declare -A SEEN=() VISITING=()
+resolve() { # resolve <пакет> — порядок установки (зависимости раньше)
+  local p=$1 d
+  [ -n "${SEEN[$p]:-}" ] && return 0
+  [ -n "${VISITING[$p]:-}" ] && die "круговая зависимость через $p"
+  have_recipe "$p" || die "нет рецепта для '$p' (ищи: creeper search)"
+  VISITING[$p]=1
+  for d in $(meta "$p" depends); do
+    installed "$d" && [ -z "${FORCE_ALL:-}" ] && continue
+    resolve "$d"
+  done
+  unset "VISITING[$p]"; SEEN[$p]=1; RESOLVED+=("$p")
+}
+
+# ---------- скачивание ----------
+download() { # download <url> <файл>
+  local url=$1 out=$2
+  if command -v curl >/dev/null; then curl -fL# --retry 3 --connect-timeout 20 -o "$out.part" "$url"
+  elif command -v wget >/dev/null; then wget -O "$out.part" "$url"
+  else
+    rm -f "$out.part"
+    die "нечем скачать $url
+    В системе ещё нет curl/wget. Скачай файл в Arch и положи в /mnt/lfs${SOURCES#$ROOT}/
+    (или сначала: creeper install curl, используя заранее скачанные исходники)"
+  fi || { rm -f "$out.part"; die "не скачалось: $url"; }
+  mv "$out.part" "$out"
+}
+
+fetch_pkg() { # fetch_pkg <пакет> — скачать и проверить все source
+  local p=$1 i=0 s f url want got
+  mkdir -p "$SOURCES" "$(dirname "$SUMS")"; touch "$SUMS"
+  local -a srcs sums
+  mapfile -t srcs < <(meta "$p" source)
+  mapfile -t sums < <(meta "$p" sha256)
+  for s in "${srcs[@]}"; do
+    f=$(src_name "$s"); url=$(src_url "$s"); want=${sums[$i]:-}; i=$((i+1))
+    if [ ! -s "$SOURCES/$f" ]; then info "скачиваю $f"; download "$url" "$SOURCES/$f"; fi
+    [ "$want" = SKIP ] && continue
+    got=$(sha256sum "$SOURCES/$f" | cut -d' ' -f1)
+    if [ -n "$want" ]; then
+      [ "$got" = "$want" ] || die "контрольная сумма $f не совпала!
+    ожидалось $want
+    получено  $got
+    Удали файл ($SOURCES/$f) и скачай заново."
+    else
+      local known; known=$(awk -v f="$f" '$2==f{print $1}' "$SUMS" | tail -n1)
+      if [ -z "$known" ]; then
+        echo "$got $f" >> "$SUMS"; info "$f: сумма запомнена (sha256 ${got:0:16}…)"
+      elif [ "$known" != "$got" ]; then
+        die "$f изменился с прошлого раза (sha256 не тот). Если так и надо — убери строку из $SUMS"
+      fi
+    fi
+  done
+}
+
+# ---------- сборка ----------
+run_step() { # run_step <пакет> <функция> <лог>  — с индикатором
+  local p=$1 fn=$2 log=$3 pid rc t0 line
+  echo "=== $fn ===" >> "$log"
+  (
+    set -e -o pipefail
+    . "$(recipe_file "$p")"
+    declare -F "$fn" >/dev/null || exit 0
+    cd "$SRCDIR"
+    "$fn"
+  ) >> "$log" 2>&1 < /dev/null &
+  pid=$!; t0=$SECONDS
+  if [ -t 1 ]; then
+    while kill -0 "$pid" 2>/dev/null; do
+      line=$(tail -n 1 "$log" 2>/dev/null | tr -d '\r' | cut -c1-$(( ${COLUMNS:-80} - 22 )))
+      printf '\r    %-8s [%4ds] %s\e[K' "$fn" $((SECONDS - t0)) "$line"
+      sleep 1
+    done
+    printf '\r\e[K'
+  fi
+  wait "$pid"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo; tail -n 25 "$log"
+    die "$p: шаг '$fn' упал (код $rc). Полный лог: $log"
+  fi
+  info "$fn: готово за $((SECONDS - t0)) с"
+}
+
+strip_tree() {
+  local f
+  find "$PKG" -type f \( -perm -u+x -o -name '*.so' -o -name '*.so.*' \) 2>/dev/null |
+  while read -r f; do
+    case $(file -b "$f" 2>/dev/null) in
+      *ELF*executable*|*ELF*shared\ object*|*ELF*pie\ executable*) strip --strip-unneeded "$f" 2>/dev/null ;;
+    esac
+  done
+}
+
+owners_index() { # "пакет путь" для всех установленных (кроме $1)
+  local d n
+  for d in "$DB"/*/; do
+    [ -f "$d/files" ] || continue
+    n=$(basename "$d"); [ "$n" = "$1" ] && continue
+    sed "s|^|$n |" "$d/files"
+  done
+}
+
+build_pkg() { # build_pkg <пакет>
+  local p=$1 ver t0=$SECONDS log
+  ver=$(meta "$p" version); [ -n "$ver" ] || die "$p: в рецепте нет version"
+  say "${B}Ссссс...${N} собираю $B$p-$ver$N"
+  fetch_pkg "$p"
+
+  mkdir -p "$LOGS"; log=$LOGS/$p.log; : > "$log"
+  local w=$WORK/$p
+  rm -rf "$w"; mkdir -p "$w/src" "$w/pkg"
+  export PKG=$w/pkg SOURCES name=$p version=$ver
+
+  # распаковка: архивы из source — в src/, остальное просто лежит в $SOURCES
+  local s f first=
+  while read -r s; do
+    [ -n "$s" ] || continue
+    f=$(src_name "$s")
+    case $f in
+      *.tar|*.tar.gz|*.tgz|*.tar.xz|*.txz|*.tar.bz2|*.tbz2|*.tar.zst|*.tar.lz)
+        tar -xf "$SOURCES/$f" -C "$w/src" || die "не распаковался $f"
+        [ -z "$first" ] && first=$f ;;
+    esac
+  done < <(meta "$p" source)
+
+  # каталог исходников: единственная папка в src/, иначе сама src/
+  local dirs; mapfile -t dirs < <(find "$w/src" -mindepth 1 -maxdepth 1 -type d)
+  if [ "${#dirs[@]}" -eq 1 ]; then SRCDIR=${dirs[0]}; else SRCDIR=$w/src; fi
+  export SRCDIR
+
+  run_step "$p" prepare "$log"
+  run_step "$p" build "$log"
+  [ "$CREEPER_CHECK" = 1 ] && run_step "$p" check "$log"
+  run_step "$p" package "$log"
+
+  # уборка в пакете
+  rm -f "$PKG/usr/share/info/dir"
+  [ "$CREEPER_STRIP" = 1 ] && strip_tree
+  [ -n "$(find "$PKG" -mindepth 1 -print -quit)" ] || die "$p: package() ничего не установил"
+
+  # метаданные внутри пакета
+  local rel; rel=$(pkgrel "$p")
+  mkdir -p "$PKG/.CREEPER"
+  cp "$(recipe_file "$p")" "$PKG/.CREEPER/recipe"
+  printf 'name=%s\nversion=%s\nrelease=%s\nbuilt=%s\n' "$p" "$ver" "$rel" "$(date '+%F %R')" > "$PKG/.CREEPER/info"
+  if [ "$CREEPER_KEEPBIN" = 1 ]; then
+    mkdir -p "$BINCACHE"
+    local bf=$BINCACHE/$(binfile "$p" "$ver" "$rel")
+    if tar --zstd -C "$PKG" -cpf "$bf.part" . 2>>"$log"; then mv "$bf.part" "$bf"; info "бинарник сохранён: ${bf##*/}"
+    else rm -f "$bf.part"; warn "$p: бинарник не сохранился (нет zstd?)"; fi
+  fi
+
+  install_tree "$p" "$ver"
+  say "$B$p-$ver$N установлен за $((SECONDS - t0)) с"
+  rm -rf "$w"
+}
+
+pkgrel()  { local r; r=$(meta "$1" release); echo "${r:-1}"; }
+binfile() { echo "$1-$2-$3.tar.zst"; }
+
+# ---------- бинарные пакеты ----------
+INDEX=
+load_index() { # скачать index.txt из BINREPO один раз за запуск
+  [ -n "$BINREPO" ] || return 1
+  [ -n "$INDEX" ] && return 0
+  mkdir -p "$WORK"; INDEX=$WORK/index.txt
+  if command -v curl >/dev/null && curl -fsSL --connect-timeout 15 -o "$INDEX.part" "$BINREPO/index.txt" \
+     || { command -v wget >/dev/null && wget -q -O "$INDEX.part" "$BINREPO/index.txt"; }; then
+    mv "$INDEX.part" "$INDEX"
+  elif [ -s "$INDEX" ]; then
+    warn "репозиторий недоступен — беру прошлый index.txt"
+  else
+    rm -f "$INDEX.part"; INDEX=/dev/null; warn "репозиторий бинарников недоступен ($BINREPO)"
+  fi
+}
+
+# строка индекса: имя версия релиз sha256 файл
+bin_entry() { load_index || return 1; awk -v n="$1" -v v="$2" -v r="$3" '$1==n && $2==v && $3==r' "$INDEX" | tail -n1; }
+
+plan_method() { # local | remote | source
+  local p=$1 ver rel; ver=$(meta "$p" version); rel=$(pkgrel "$p")
+  [ -n "${SOURCE_ONLY:-}" ] && { echo source; return; }
+  [ -s "$BINCACHE/$(binfile "$p" "$ver" "$rel")" ] && { echo local; return; }
+  [ -n "$(bin_entry "$p" "$ver" "$rel")" ] && { echo remote; return; }
+  echo source
+}
+
+fetch_bin() { # скачать бинарник из репозитория и проверить сумму
+  local p=$1 ver rel e f sum got; ver=$(meta "$p" version); rel=$(pkgrel "$p")
+  e=$(bin_entry "$p" "$ver" "$rel"); [ -n "$e" ] || die "$p: нет в репозитории"
+  sum=$(echo "$e" | awk '{print $4}'); f=$(echo "$e" | awk '{print $5}')
+  mkdir -p "$BINCACHE"
+  if [ ! -s "$BINCACHE/$f" ]; then info "скачиваю $f"; download "$BINREPO/$f" "$BINCACHE/$f"; fi
+  got=$(sha256sum "$BINCACHE/$f" | cut -d' ' -f1)
+  [ "$got" = "$sum" ] || { rm -f "$BINCACHE/$f"; die "$f: контрольная сумма не совпала — файл удалён, попробуй ещё раз"; }
+}
+
+install_bin() { # распаковать бинарник и установить
+  local p=$1 ver rel f t0=$SECONDS; ver=$(meta "$p" version); rel=$(pkgrel "$p")
+  f=$BINCACHE/$(binfile "$p" "$ver" "$rel")
+  say "${B}Ссссс...${N} ставлю готовый $B$p-$ver$N"
+  local w=$WORK/$p; rm -rf "$w"; mkdir -p "$w/pkg"
+  export PKG=$w/pkg
+  tar --zstd -C "$PKG" -xpf "$f" || die "$p: бинарник повреждён ($f)"
+  [ -f "$PKG/.CREEPER/info" ] || die "$p: это не пакет creeper ($f)"
+  install_tree "$p" "$ver"
+  say "$B$p-$ver$N установлен за $((SECONDS - t0)) с (бинарник)"
+  rm -rf "$w"
+}
+
+install_tree() { # install_tree <пакет> <версия> — из $PKG в систему
+  local p=$1 ver=$2 tmp=$WORK/.$p.lists b
+  rm -rf "$tmp"; mkdir -p "$tmp"
+  # метаданные пакета (рецепт, с которым он собран) убираем из дерева
+  local R=$tmp/recipe
+  if [ -d "$PKG/.CREEPER" ]; then mv "$PKG/.CREEPER/recipe" "$R"; mv "$PKG/.CREEPER/info" "$tmp/info"; rm -rf "$PKG/.CREEPER"
+  else cp "$(recipe_file "$p")" "$R"; fi
+
+  # конфиги из backup=(): если уже есть в системе — не затираем
+  while read -r b; do
+    [ -n "$b" ] || continue; b=${b#/}
+    if [ -e "$PKG/$b" ] && [ -e "$ROOT/$b" ]; then
+      if cmp -s "$PKG/$b" "$ROOT/$b"; then :; else
+        mv "$PKG/$b" "$PKG/$b.creeper-new"
+        warn "конфиг /$b оставлен как был, новый — /$b.creeper-new"
+      fi
+    fi
+  done < <(meta_f "$R" backup)
+
+  # список файлов; конфиги из backup числятся за пакетом под своим именем
+  { ( cd "$PKG" && find . -mindepth 1 \( -type f -o -type l \) -printf '/%P\n' )
+    while read -r b; do [ -n "$b" ] && [ -e "$ROOT/${b#/}" ] && echo "/${b#/}"; done < <(meta_f "$R" backup)
+  } | normalize | sort -u > "$tmp/files"
+  ( cd "$PKG" && find . -mindepth 1 -type d -printf '/%P\n' ) | normalize | sort -u > "$tmp/dirs"
+
+  # конфликты с другими пакетами
+  local conf
+  conf=$(owners_index "$p" | awk -v pkg="$p" 'NR==FNR{own[$2]=$1; next} ($0 in own){print "    " $0 "  (пакет " own[$0] ")"}' - "$tmp/files")
+  if [ -n "$conf" ]; then
+    echo "$conf" | head -n 20 >&2
+    [ -n "${FORCE:-}" ] || die "$p: файлы уже принадлежат другим пакетам (добавь --force, если уверен)"
+  fi
+
+  # копирование; --keep-directory-symlink бережёт ссылки /lib -> usr/lib и т.п.
+  tar -C "$PKG" -cpf - . | tar -C "$ROOT/" -xpf - --keep-directory-symlink --no-overwrite-dir \
+    || die "$p: ошибка копирования в систему"
+
+  # переустановка/обновление: убрать файлы, которых в новой версии нет
+  if [ -f "$DB/$p/files" ]; then
+    local bk; bk=$(meta_f "$R" backup | sed 's#^/*#/#')
+    comm -23 "$DB/$p/files" "$tmp/files" | grep -vxF -e "${bk:-//нет//}" |
+      while read -r f; do rm -f "$ROOT$f"; done
+    [ -f "$DB/$p/dirs" ] && comm -23 "$DB/$p/dirs" "$tmp/dirs" | sort -r |
+      while read -r f; do protected_dir "$f" || rmdir "$ROOT$f" 2>/dev/null; done
+  fi
+
+  mkdir -p "$DB/$p"
+  mv "$tmp/files" "$DB/$p/files"; mv "$tmp/dirs" "$DB/$p/dirs"
+  echo "$ver" > "$DB/$p/version"
+  meta_f "$R" depends > "$DB/$p/depends"
+  meta_f "$R" backup  > "$DB/$p/backup"
+  local rel; rel=$(meta_f "$R" release); echo "${rel:-1}" > "$DB/$p/release"
+  date '+%F %R' > "$DB/$p/date"
+  cp "$R" "$DB/$p/recipe"
+  rm -rf "$tmp"
+  sync                                   # на диск сразу — зависание не оставит пустых файлов
+  command -v ldconfig >/dev/null && [ -z "$ROOT" ] && ldconfig
+
+  if [ -z "$ROOT" ]; then
+    ( set -e; . "$DB/$p/recipe"; declare -F post_install >/dev/null || exit 0; cd /; post_install ) \
+      || warn "$p: post_install завершился с ошибкой"
+  fi
+}
+
+# ---------- удаление ----------
+rdeps() { # кто из установленных зависит от $1
+  local d
+  for d in "$DB"/*/; do
+    [ -f "$d/depends" ] || continue
+    grep -qx "$1" "$d/depends" && basename "$d"
+  done
+}
+
+protected_dir() { # / и каталоги первых двух уровней (/usr/lib, /etc/ssl…) не трогаем
+  local s=${1//[^\/]/}
+  [ ${#s} -le 2 ]
+}
+
+blow_pkg() {
+  local p=$1 who f b
+  installed "$p" || die "'$p' не установлен"
+  who=$(rdeps "$p" | tr '\n' ' ')
+  if [ -n "$who" ] && [ -z "${FORCE:-}" ]; then
+    die "от '$p' зависят: $who— сначала взорви их (или --force)"
+  fi
+  say "${B}Сссссс...${N} $p-$(inst_version "$p")"
+  local -A keep=()
+  if [ -z "${PURGE:-}" ]; then
+    while read -r b; do [ -n "$b" ] && keep[/${b#/}]=1; done < "$DB/$p/backup"
+  fi
+  if [ -z "$ROOT" ]; then
+    ( . "$DB/$p/recipe"; declare -F pre_blow >/dev/null || exit 0; cd /; pre_blow ) || true
+  fi
+  local n=0
+  while read -r f; do
+    [ -n "$f" ] || continue
+    if [ -n "${keep[$f]:-}" ]; then info "конфиг $f сохранён"; continue; fi
+    rm -f "$ROOT$f" && n=$((n+1))
+  done < "$DB/$p/files"
+  sort -r "$DB/$p/dirs" | while read -r f; do
+    protected_dir "$f" && continue
+    rmdir "$ROOT$f" 2>/dev/null
+  done
+  rm -rf "${DB:?}/$p"
+  command -v ldconfig >/dev/null && [ -z "$ROOT" ] && ldconfig
+  printf '%s    *** БА-БАХ! ***%s  %s взорван (%d файлов)\n' "$R" "$N" "$p" "$n"
+}
+
+# ---------- команды ----------
+# план: для каждого пакета — бинарник (local/remote) или сборка (source)
+declare -A METHOD=()
+run_plan() { # run_plan <пакеты...> — скачать всё, потом установить
+  local a m line=
+  [ -z "${SOURCE_ONLY:-}" ] && load_index
+  for a in "$@"; do m=$(plan_method "$a"); METHOD[$a]=$m
+    case $m in local) line+=" $a${G}[бин]${N}";; remote) line+=" $a${G}[бин↓]${N}";; *) line+=" $a${Y}[сборка]${N}";; esac
+  done
+  say "будет установлено:$line"
+  for a in "$@"; do case ${METHOD[$a]} in remote) fetch_bin "$a";; source) fetch_pkg "$a";; esac; done
+  [ -n "${FETCH_ONLY:-}" ] && { say "всё скачано — можно отключать сеть"; return 0; }
+  for a in "$@"; do case ${METHOD[$a]} in local|remote) install_bin "$a";; *) build_pkg "$a";; esac; done
+}
+
+cmd_install() {
+  local -a want=(); local a
+  for a in "$@"; do case $a in
+    --rebuild) REBUILD=1;; --source|-s) SOURCE_ONLY=1;; --check) CREEPER_CHECK=1;; --force) FORCE=1;;
+    -*) die "неизвестный ключ $a";; *) want+=("$a");; esac; done
+  [ ${#want[@]} -gt 0 ] || die "что ставить? пример: creeper install wget"
+  need_root install; lock
+  for a in "${want[@]}"; do
+    have_recipe "$a" || die "нет рецепта '$a' (обнови рецепты: creeper sync)"
+    if installed "$a" && [ -z "${REBUILD:-}" ] && [ "$(inst_version "$a")" = "$(meta "$a" version)" ] \
+       && [ "$(cat "$DB/$a/release" 2>/dev/null || echo 1)" = "$(pkgrel "$a")" ]; then
+      info "$a-$(inst_version "$a") уже установлен (пересобрать: --rebuild)"; continue
+    fi
+    resolve "$a"
+  done
+  [ ${#RESOLVED[@]} -gt 0 ] || return 0
+  run_plan "${RESOLVED[@]}"
+}
+
+cmd_blow() {
+  local -a want=(); local a
+  for a in "$@"; do case $a in
+    --force) FORCE=1;; --purge) PURGE=1;;
+    -*) die "неизвестный ключ $a";; *) want+=("$a");; esac; done
+  [ ${#want[@]} -gt 0 ] || die "что взрывать? пример: creeper blow wget"
+  need_root blow; lock
+  for a in "${want[@]}"; do blow_pkg "$a"; done
+}
+
+cmd_fetch() { # скачать всё нужное (бинарники или исходники), не устанавливая
+  local -a want=(); local a
+  for a in "$@"; do case $a in --source|-s) SOURCE_ONLY=1;; *) want+=("$a");; esac; done
+  [ ${#want[@]} -gt 0 ] || die "что скачать?"
+  need_root fetch; lock
+  for a in "${want[@]}"; do resolve "$a"; done
+  [ ${#RESOLVED[@]} -gt 0 ] || { info "всё уже установлено"; return 0; }
+  FETCH_ONLY=1 run_plan "${RESOLVED[@]}"
+}
+
+cmd_upgrade() {
+  need_root upgrade; lock
+  local d p
+  for d in "$DB"/*/; do
+    p=$(basename "$d"); [ -f "$d/version" ] || continue
+    have_recipe "$p" || continue
+    if [ "$(inst_version "$p")" != "$(meta "$p" version)" ] || \
+       [ "$(cat "$d/release" 2>/dev/null || echo 1)" != "$(pkgrel "$p")" ]; then RESOLVED+=("$p"); fi
+  done
+  [ ${#RESOLVED[@]} -gt 0 ] || { say "всё свежее"; return 0; }
+  run_plan "${RESOLVED[@]}"
+}
+
+cmd_pack() { # сделать бинарник из уже установленного пакета
+  need_root pack
+  local p=${1:?укажи пакет} ver rel t out
+  installed "$p" || die "'$p' не установлен"
+  ver=$(inst_version "$p"); rel=$(cat "$DB/$p/release" 2>/dev/null || echo 1)
+  t=$(mktemp -d); mkdir -p "$t/.CREEPER" "$BINCACHE"
+  cp "$DB/$p/recipe" "$t/.CREEPER/recipe"
+  printf 'name=%s\nversion=%s\nrelease=%s\nbuilt=%s\n' "$p" "$ver" "$rel" "$(cat "$DB/$p/date")" > "$t/.CREEPER/info"
+  # конфиги попадают в пакет такими, как сейчас в системе (пакет — твоя локальная копия)
+  sed 's#^/##' "$DB/$p/files" | grep -v '\.creeper-new$' > "$t/list"
+  out=$BINCACHE/$(binfile "$p" "$ver" "$rel")
+  tar --zstd -cpf "$out.part" -C "$t" .CREEPER -C "$ROOT/" --no-recursion -T "$t/list" || { rm -rf "$t" "$out.part"; die "не упаковалось"; }
+  mv "$out.part" "$out"
+  rm -rf "$t"
+  say "готово: $out ($(du -h "$out" | cut -f1))"
+  return 0
+}
+
+cmd_index() { # index.txt для репозитория: имя версия релиз sha256 файл
+  local f n v r
+  for f in "$BINCACHE"/*.tar.zst; do
+    [ -f "$f" ] || continue
+    local inf; inf=$(tar --zstd -xOf "$f" --wildcards '*.CREEPER/info' 2>/dev/null) || continue
+    n=$(echo "$inf" | sed -n 's/^name=//p'); v=$(echo "$inf" | sed -n 's/^version=//p'); r=$(echo "$inf" | sed -n 's/^release=//p')
+    [ -n "$n" ] && [ -n "$v" ] || continue
+    printf '%s %s %s %s %s\n' "$n" "$v" "${r:-1}" "$(sha256sum "$f" | cut -d' ' -f1)" "$(basename "$f")"
+  done | sort
+}
+
+cmd_sync() { # обновить рецепты из репозитория
+  need_root sync
+  [ -n "$BINREPO" ] || die "BINREPO не задан в $CONF"
+  local t; t=$(mktemp -d)
+  download "$BINREPO/recipes.tar.gz" "$t/r.tar.gz"
+  tar -xzf "$t/r.tar.gz" -C "$t" || die "архив рецептов повреждён"
+  [ -d "$t/recipes" ] || die "в архиве нет папки recipes/"
+  mkdir -p "$RECIPES"; cp -r "$t"/recipes/* "$RECIPES/"
+  say "рецепты обновлены: $(ls "$t/recipes" | wc -l) шт."
+  rm -rf "$t"
+  INDEX=; load_index && [ -s "$INDEX" ] && info "бинарников в репозитории: $(wc -l < "$INDEX")"
+  return 0
+}
+
+cmd_list() {
+  local d p n=0
+  for d in "$DB"/*/; do
+    [ -f "$d/version" ] || continue
+    p=$(basename "$d"); n=$((n+1))
+    printf '%-20s %-14s %s\n' "$p" "$(cat "$d/version")" "$(cat "$d/date" 2>/dev/null)"
+  done
+  [ $n -gt 0 ] || info "пока ничего (базовая система LFS не учитывается)"
+}
+
+cmd_search() {
+  local d p mark
+  for d in "$RECIPES"/*/; do
+    p=$(basename "$d"); [ -r "$d/recipe" ] || continue
+    [ -n "${1:-}" ] && ! { echo "$p"; meta "$p" desc; } | grep -qi -- "$1" && continue
+    mark=; installed "$p" && mark="${G}[установлен $(inst_version "$p")]${N}"
+    printf '%-16s %-12s %s %s\n' "$p" "$(meta "$p" version)" "$(meta "$p" desc)" "$mark"
+  done
+}
+
+cmd_info() {
+  local p=${1:?укажи пакет}
+  have_recipe "$p" || installed "$p" || die "нет такого пакета: $p"
+  echo "${B}$p${N}"
+  have_recipe "$p" && {
+    echo "  описание:    $(meta "$p" desc)"
+    echo "  в рецепте:   $(meta "$p" version)"
+    echo "  зависит от:  $(meta "$p" depends | tr '\n' ' ')"
+    echo "  сайт:        $(meta "$p" url)"
+  }
+  if installed "$p"; then
+    local sz
+    sz=$(sed "s|^|$ROOT|" "$DB/$p/files" | xargs -d '\n' stat -c %s 2>/dev/null | awk '{s+=$1} END{printf "%.1f МБ", s/1048576}')
+    echo "  установлен:  $(inst_version "$p") ($(cat "$DB/$p/date"))"
+    echo "  файлов:      $(wc -l < "$DB/$p/files"), размер $sz"
+    local r; r=$(rdeps "$p" | tr '\n' ' '); echo "  нужен для:   ${r:--}"
+  else
+    echo "  не установлен"
+  fi
+}
+
+cmd_files() { installed "${1:?укажи пакет}" || die "'$1' не установлен"; cat "$DB/$1/files"; }
+
+cmd_owns() {
+  local f=${1:?укажи файл} hit
+  case $f in /*) ;; *) f=$(command -v "$f" 2>/dev/null || readlink -f "$f");; esac
+  f=$(echo "$f" | normalize)
+  hit=$(owners_index "" | awk -v f="$f" '$2==f{print $1}')
+  [ -n "$hit" ] && echo "$f принадлежит пакету $B$hit$N" || echo "$f — ничей (базовая LFS или поставлен вручную)"
+}
+
+case ${1:-help} in
+  install|i)  shift; cmd_install "$@" ;;
+  blow|b|remove) shift; cmd_blow "$@" ;;
+  upgrade|up) shift; cmd_upgrade "$@" ;;
+  fetch)      shift; cmd_fetch "$@" ;;
+  list|ls)    cmd_list ;;
+  search|s)   shift; cmd_search "$@" ;;
+  info)       shift; cmd_info "$@" ;;
+  files)      shift; cmd_files "$@" ;;
+  owns)       shift; cmd_owns "$@" ;;
+  pack)       shift; cmd_pack "$@" ;;
+  index)      cmd_index ;;
+  sync)       cmd_sync ;;
+  version|--version) echo "creeper $CREEPER_VERSION" ;;
+  help|-h|--help) usage ;;
+  *) usage; exit 1 ;;
+esac

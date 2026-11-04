@@ -1,0 +1,9 @@
+name=which
+version=2.23
+desc="показывает, где лежит программа (маленький пакет для проверки фермы)"
+url=https://savannah.gnu.org/projects/which/
+source=(https://ftp.gnu.org/gnu/which/which-$version.tar.gz)
+depends=()
+
+build()   { ./configure --prefix=/usr; make; }
+package() { make DESTDIR="$PKG" install; }

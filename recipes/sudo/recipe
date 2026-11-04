@@ -1,0 +1,24 @@
+name=sudo
+version=1.9.17p2
+desc="запуск команд от root (для: sudo creeper ...)"
+url=https://www.sudo.ws/
+source=(https://www.sudo.ws/dist/sudo-$version.tar.gz)
+depends=()
+backup=(etc/sudoers etc/sudoers.d/00-wheel)
+
+build() {
+  ./configure --prefix=/usr --libexecdir=/usr/lib --with-secure-path \
+              --with-env-editor --docdir=/usr/share/doc/sudo-$version \
+              --with-passprompt="[sudo] password for %p: "
+  make
+}
+package() {
+  make DESTDIR="$PKG" install
+  install -dm750 "$PKG/etc/sudoers.d"
+  echo '%wheel ALL=(ALL:ALL) ALL' > "$PKG/etc/sudoers.d/00-wheel"
+  chmod 440 "$PKG/etc/sudoers.d/00-wheel"
+}
+post_install() {
+  getent group wheel >/dev/null || groupadd -g 97 wheel
+  echo "Чтобы пользователь мог пользоваться sudo:  usermod -aG wheel hyprn  (и перелогиниться)"
+}

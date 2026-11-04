@@ -1,0 +1,13 @@
+name=libtasn1
+version=4.20.0
+desc="библиотека ASN.1 (нужна p11-kit)"
+url=https://www.gnu.org/software/libtasn1/
+source=(https://ftp.gnu.org/gnu/libtasn1/libtasn1-$version.tar.gz)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --disable-static
+  make
+}
+check()   { make check; }
+package() { make DESTDIR="$PKG" install; }

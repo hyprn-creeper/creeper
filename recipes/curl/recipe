@@ -1,0 +1,13 @@
+name=curl
+version=8.15.0
+desc="передача данных по URL (curl и libcurl)"
+url=https://curl.se/
+source=(https://curl.se/download/curl-$version.tar.xz)
+depends=(make-ca)
+
+build() {
+  ./configure --prefix=/usr --disable-static --with-openssl --without-libpsl \
+              --with-ca-path=/etc/ssl/certs
+  make
+}
+package() { make DESTDIR="$PKG" install; }

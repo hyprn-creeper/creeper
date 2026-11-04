@@ -1,0 +1,13 @@
+name=wget
+version=1.25.0
+desc="скачивание файлов по HTTP/HTTPS/FTP"
+url=https://www.gnu.org/software/wget/
+source=(https://ftp.gnu.org/gnu/wget/wget-$version.tar.gz)
+depends=(make-ca)
+backup=(etc/wgetrc)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --with-ssl=openssl --without-libpsl
+  make
+}
+package() { make DESTDIR="$PKG" install; }

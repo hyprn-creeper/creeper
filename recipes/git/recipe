@@ -1,0 +1,14 @@
+name=git
+version=2.50.1
+desc="система контроля версий"
+url=https://git-scm.com/
+source=(https://www.kernel.org/pub/software/scm/git/git-$version.tar.xz)
+depends=(curl)
+
+build() {
+  ./configure --prefix=/usr --with-gitconfig=/etc/gitconfig --with-python=python3
+  make
+}
+package() {
+  make DESTDIR="$PKG" perllibdir=/usr/lib/perl5/5.42/site_perl install
+}

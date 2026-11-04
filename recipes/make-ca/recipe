@@ -1,0 +1,18 @@
+name=make-ca
+version=1.16.1
+desc="сертификаты CA для HTTPS (из NSS/Mozilla)"
+url=https://github.com/lfs-book/make-ca
+source=(make-ca-$version.tar.gz::https://github.com/lfs-book/make-ca/archive/v$version/make-ca-$version.tar.gz
+        certdata.txt::https://hg-edge.mozilla.org/projects/nss/raw-file/tip/lib/ckfw/builtins/certdata.txt)
+sha256=('' SKIP)
+depends=(p11-kit)
+
+build() { :; }
+package() {
+  make DESTDIR="$PKG" install
+  install -vdm755 "$PKG/etc/ssl/local"
+}
+post_install() {
+  # сертификаты генерируются из certdata.txt (скачан вместе с исходниками)
+  /usr/sbin/make-ca -C "$SOURCES/certdata.txt"
+}
