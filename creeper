@@ -279,6 +279,8 @@ bin_entry() { load_index || return 1; awk -v n="$1" -v v="$2" -v r="$3" '$1==n &
 plan_method() { # local | remote | source
   local p=$1 ver rel; ver=$(meta "$p" version); rel=$(pkgrel "$p")
   [ -n "${SOURCE_ONLY:-}" ] && { echo source; return; }
+  # --rebuild: то, что попросили явно, собирается заново из исходников
+  [ -n "${REBUILD:-}" ] && [ -n "${TARGET[$p]:-}" ] && { echo source; return; }
   [ -s "$BINCACHE/$(binfile "$p" "$ver" "$rel")" ] && { echo local; return; }
   [ -n "$(bin_entry "$p" "$ver" "$rel")" ] && { echo remote; return; }
   echo source
@@ -417,7 +419,7 @@ blow_pkg() {
 
 # ---------- команды ----------
 # план: для каждого пакета — бинарник (local/remote) или сборка (source)
-declare -A METHOD=()
+declare -A METHOD=() TARGET=()
 run_plan() { # run_plan <пакеты...> — скачать всё, потом установить
   local a m line=
   [ -z "${SOURCE_ONLY:-}" ] && load_index
@@ -438,6 +440,7 @@ cmd_install() {
   [ ${#want[@]} -gt 0 ] || die "что ставить? пример: creeper install wget"
   need_root install; lock
   for a in "${want[@]}"; do
+    TARGET[$a]=1
     have_recipe "$a" || die "нет рецепта '$a' (обнови рецепты: creeper sync)"
     if installed "$a" && [ -z "${REBUILD:-}" ] && [ "$(inst_version "$a")" = "$(meta "$a" version)" ] \
        && [ "$(cat "$DB/$a/release" 2>/dev/null || echo 1)" = "$(pkgrel "$a")" ]; then
