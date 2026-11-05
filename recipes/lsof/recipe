@@ -1,0 +1,12 @@
+name=lsof
+version=4.99.5
+desc="какие процессы держат файлы и порты"
+url=https://github.com/lsof-org/lsof
+source=(https://github.com/lsof-org/lsof/releases/download/$version/lsof-$version.tar.gz)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --disable-static
+  make
+}
+package() { make DESTDIR="$PKG" install; }

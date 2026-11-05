@@ -1,0 +1,13 @@
+name=usbutils
+version=018
+desc="lsusb — список устройств USB"
+url=https://github.com/gregkh/usbutils
+source=(https://www.kernel.org/pub/linux/utils/usb/usbutils/usbutils-$version.tar.xz)
+depends=(libusb hwdata)
+
+build() {
+  mkdir -p build && cd build
+  meson setup --prefix=/usr --buildtype=release ..
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

@@ -1,0 +1,12 @@
+name=htop
+version=3.4.1
+desc="интерактивный монитор процессов"
+url=https://htop.dev/
+source=(https://github.com/htop-dev/htop/releases/download/$version/htop-$version.tar.xz)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc
+  make
+}
+package() { make DESTDIR="$PKG" install; }

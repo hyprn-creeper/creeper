@@ -45,7 +45,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost
           df -h /
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Образ LFS (релиз base)
         run: |
@@ -56,6 +56,7 @@ jobs:
           sudo du -sh "$R"
 
       - name: Подготовка chroot
+        id: prep
         run: |
           sudo install -m755 creeper "$R/usr/bin/creeper"
           sudo rm -rf "$R/var/lib/creeper/recipes"
@@ -81,13 +82,15 @@ jobs:
 
       - name: Логи сборки
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: logs
           path: /lfs/var/log/creeper/
           if-no-files-found: ignore
 
       - name: Публикация бинарников
+        # выкладываем даже при сбое: то, что успело собраться, — годное
+        if: always() && steps.prep.outcome == 'success'
         run: |
           mkdir -p /tmp/up
           sudo chroot "$R" /usr/bin/env -i PATH=/usr/bin:/usr/sbin /usr/bin/creeper index > /tmp/new-index.txt
@@ -95,11 +98,22 @@ jobs:
           awk 'FILENAME==ARGV[1]{old[$5]=$4; next} !($5 in old) || old[$5]!=$4 {print $5}' /tmp/old/index.txt /tmp/new-index.txt > /tmp/new-files
           echo "новые бинарники:"; cat /tmp/new-files
           while read -r f; do sudo cp "$R/var/cache/creeper/bin/$f" /tmp/up/; done < /tmp/new-files
+          sudo chown -R "$(id -u)" /tmp/up
           # общий индекс: старые строки + новые (по имени файла новые главнее)
           awk '{line[$5]=$0} END{for (f in line) print line[f]}' /tmp/old/index.txt /tmp/new-index.txt | sort > /tmp/up/index.txt
           tar -czf /tmp/up/recipes.tar.gz recipes
+          cp creeper /tmp/up/creeper
+          echo "$(sed -n 's/^CREEPER_VERSION=//p' creeper) $(sha256sum creeper | cut -d' ' -f1)" > /tmp/up/creeper.version
           gh release view bin >/dev/null 2>&1 || gh release create bin --title "creeper: бинарные пакеты" \
             --notes "Готовые пакеты для Hyprn LFS. Ставить: sudo creeper install <пакет>"
+          # проверка: каждый файл из индекса есть в релизе или загружается сейчас
+          gh release view bin --json assets -q '.assets[].name' > /tmp/assets.txt
+          missing=$(awk '{print $5}' /tmp/up/index.txt | while read -r f; do
+                      [ -f "/tmp/up/$f" ] || grep -qxF "$f" /tmp/assets.txt || echo "$f"; done)
+          if [ -n "$missing" ]; then
+            echo "убираю из индекса строки без файлов: $missing"
+            echo "$missing" | awk 'NR==FNR{m[$1]=1; next} !($5 in m)' - /tmp/up/index.txt > /tmp/idx && mv /tmp/idx /tmp/up/index.txt
+          fi
           gh release upload bin /tmp/up/* --clobber
           ls -lh /tmp/up
 
@@ -107,4 +121,3 @@ jobs:
         if: always()
         run: |
           for m in run sys proc dev/pts dev; do sudo umount "$R/$m" 2>/dev/null || true; done
-# hyprn creeper farm

@@ -1,0 +1,12 @@
+name=rsync
+version=3.4.1
+desc="быстрое копирование и синхронизация файлов"
+url=https://rsync.samba.org/
+source=(https://www.samba.org/ftp/rsync/src/rsync-$version.tar.gz)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --disable-xxhash --without-included-zlib
+  make
+}
+package() { make DESTDIR="$PKG" install; }

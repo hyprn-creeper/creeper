@@ -1,0 +1,17 @@
+name=lm-sensors
+version=3.6.2
+desc="sensors — температуры процессора и вентиляторы"
+url=https://github.com/hramrach/lm-sensors
+source=(lm-sensors-3-6-2.tar.gz::https://github.com/hramrach/lm-sensors/archive/V3-6-2/lm-sensors-3-6-2.tar.gz)
+depends=(which)
+backup=(etc/sensors3.conf)
+
+build() {
+  make PREFIX=/usr BUILD_STATIC_LIB=0 MANDIR=/usr/share/man EXCLUDE_PROGS=sensord
+}
+package() {
+  make PREFIX=/usr BUILD_STATIC_LIB=0 MANDIR=/usr/share/man EXCLUDE_PROGS=sensord DESTDIR="$PKG" install
+}
+post_install() {
+  echo "Определить датчики: sudo sensors-detect   потом: sensors"
+}

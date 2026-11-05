@@ -1,0 +1,15 @@
+name=cmake
+version=4.1.0
+desc="система сборки CMake (нужна многим программам)"
+url=https://cmake.org/
+source=(https://github.com/Kitware/CMake/releases/download/v$version/cmake-$version.tar.gz)
+depends=()
+
+prepare() { sed -i '/"lib64"/s/64//' Modules/GNUInstallDirs.cmake; }
+build() {
+  # встроенные копии библиотек — не тянет libuv/libarchive/nghttp2
+  ./bootstrap --prefix=/usr --no-system-libs --parallel="$JOBS" \
+              --mandir=/share/man --docdir=/share/doc/cmake-$version
+  make
+}
+package() { make DESTDIR="$PKG" install; }

@@ -1,0 +1,16 @@
+name=pcre2
+version=10.45
+desc="регулярные выражения Perl (нужны git, grep и др.)"
+url=https://github.com/PCRE2Project/pcre2
+source=(https://github.com/PCRE2Project/pcre2/releases/download/pcre2-$version/pcre2-$version.tar.bz2)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --docdir=/usr/share/doc/pcre2-$version \
+              --enable-unicode --enable-jit --enable-pcre2-16 --enable-pcre2-32 \
+              --enable-pcre2grep-libz --enable-pcre2grep-libbz2 \
+              --enable-pcre2test-libreadline --disable-static
+  make
+}
+check()   { make check; }
+package() { make DESTDIR="$PKG" install; }

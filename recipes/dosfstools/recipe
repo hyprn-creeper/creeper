@@ -1,0 +1,13 @@
+name=dosfstools
+version=4.2
+desc="mkfs.fat, fsck.fat — работа с FAT (флешки, раздел EFI)"
+url=https://github.com/dosfstools/dosfstools
+source=(https://github.com/dosfstools/dosfstools/releases/download/v$version/dosfstools-$version.tar.gz)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --enable-compat-symlinks --mandir=/usr/share/man \
+              --docdir=/usr/share/doc/dosfstools-$version
+  make
+}
+package() { make DESTDIR="$PKG" install; }

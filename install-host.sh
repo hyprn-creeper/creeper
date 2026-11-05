@@ -36,4 +36,4 @@ chown -R root:root "$LFS/usr/bin/creeper" "$LFS/var/lib/creeper" "$LFS/var/cache
 echo
 echo "Готово. Загрузись в LFS, войди как root и выполни:"
 echo "    creeper search"
-echo "    creeper install curl wget sudo   (или: creeper help)"
+echo "    creeper help"

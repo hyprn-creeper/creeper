@@ -1,0 +1,9 @@
+name=hwdata
+version=0.398
+desc="базы ID устройств PCI/USB (для lspci, lsusb)"
+url=https://github.com/vcrhonek/hwdata
+source=(hwdata-$version.tar.gz::https://github.com/vcrhonek/hwdata/archive/v$version/hwdata-$version.tar.gz)
+depends=()
+
+build()   { ./configure --prefix=/usr --disable-blacklist; }
+package() { make DESTDIR="$PKG" install; }

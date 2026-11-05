@@ -1,0 +1,13 @@
+name=pciutils
+version=3.14.0
+desc="lspci — список устройств PCI (видеокарта, Wi-Fi и т.п.)"
+url=https://mj.ucw.cz/sw/pciutils/
+source=(https://mj.ucw.cz/download/linux/pci/pciutils-$version.tar.gz)
+depends=(hwdata)
+
+prepare() { sed -r '/INSTALL/{/PCI_IDS|update-pciids /d; s/update-pciids.8//}' -i Makefile; }
+build()   { make PREFIX=/usr SHAREDIR=/usr/share/hwdata SHARED=yes; }
+package() {
+  make PREFIX=/usr SHAREDIR=/usr/share/hwdata SHARED=yes DESTDIR="$PKG" install install-lib
+  chmod -v 755 "$PKG/usr/lib/libpci.so"
+}

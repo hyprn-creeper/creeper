@@ -1,0 +1,13 @@
+name=libevent
+version=2.1.12
+desc="библиотека событий (нужна tmux)"
+url=https://libevent.org/
+source=(https://github.com/libevent/libevent/releases/download/release-$version-stable/libevent-$version-stable.tar.gz)
+depends=()
+
+prepare() { sed -i 's/python/&3/' event_rpcgen.py; }
+build() {
+  ./configure --prefix=/usr --disable-static
+  make
+}
+package() { make DESTDIR="$PKG" install; }

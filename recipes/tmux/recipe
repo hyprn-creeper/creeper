@@ -1,0 +1,12 @@
+name=tmux
+version=3.5a
+desc="несколько терминалов в одном (вкладки, разделение экрана в консоли)"
+url=https://github.com/tmux/tmux
+source=(https://github.com/tmux/tmux/releases/download/$version/tmux-$version.tar.gz)
+depends=(libevent)
+
+build() {
+  ./configure --prefix=/usr
+  make
+}
+package() { make DESTDIR="$PKG" install; }

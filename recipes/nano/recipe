@@ -1,0 +1,15 @@
+name=nano
+version=8.6
+desc="простой текстовый редактор"
+url=https://www.nano-editor.org/
+source=(https://www.nano-editor.org/dist/v8/nano-$version.tar.xz)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --enable-utf8 --docdir=/usr/share/doc/nano-$version
+  make
+}
+package() {
+  make DESTDIR="$PKG" install
+  install -v -m644 doc/sample.nanorc "$PKG/usr/share/doc/nano-$version"
+}

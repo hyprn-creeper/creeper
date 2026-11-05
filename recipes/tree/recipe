@@ -1,0 +1,9 @@
+name=tree
+version=2.2.1
+desc="дерево каталогов в терминале"
+url=https://oldmanprogrammer.net/source.php?dir=projects/tree
+source=(https://gitlab.com/OldManProgrammer/unix-tree/-/archive/$version/unix-tree-$version.tar.bz2)
+depends=()
+
+build()   { make; }
+package() { make PREFIX="$PKG/usr" MANDIR="$PKG/usr/share/man" install; }

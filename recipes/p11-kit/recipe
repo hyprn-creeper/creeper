@@ -20,7 +20,7 @@ EOT
 build() {
   mkdir -p p11-build && cd p11-build
   meson setup .. --prefix=/usr --buildtype=release -D trust_paths=/etc/pki/anchors
-  ninja
+  ninja -j"$JOBS"
 }
 check()   { cd p11-build && LC_ALL=C ninja test; }
 package() {
