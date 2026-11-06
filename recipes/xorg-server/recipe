@@ -1,5 +1,6 @@
 name=xorg-server
 version=21.1.18
+release=2
 desc="X-сервер Xorg (modesetting, без Mesa: программная отрисовка)"
 source=(https://www.x.org/pub/individual/xserver/xorg-server-$version.tar.xz)
 depends=(pixman libxcvt libXfont2 libxkbfile libdrm libpciaccess libxshmfence font-util xtrans libXau libXdmcp xkeyboard-config xkbcomp)
@@ -25,6 +26,7 @@ EOF
   chmod 4755 "$PKG/usr/libexec/Xorg.wrap" 2>/dev/null || true
 }
 post_install() {
+  install -dm755 /var/lib/xkb
   install -dm1777 /tmp/.ICE-unix /tmp/.X11-unix
   grep -q '/tmp/.X11-unix' /etc/sysconfig/createfiles 2>/dev/null || cat >> /etc/sysconfig/createfiles << "EOF"
 /tmp/.ICE-unix dir 1777 root root
