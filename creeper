@@ -873,7 +873,7 @@ farm_send_file() {
   bash -n "$f" || die "$f: ошибка в рецепте"
   n=$(meta_f "$f" name); v=$(meta_f "$f" version)
   [ -n "$n" ] && [ -n "$v" ] || die "$f: в рецепте нет name/version"
-  [[ $n =~ ^[a-z0-9][a-z0-9._+-]*$ ]] || die "$f: странное имя пакета '$n'"
+  [[ $n =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || die "$f: странное имя пакета '$n'"
   repo_recipe_sha "$n"
   body=$(python3 -c "import json,sys,base64
 f,n,v,sha,ref=sys.argv[1:6]
@@ -944,7 +944,7 @@ cmd_farm_build() {
     -*) die "неизвестный ключ $a";; *) want+=("$a");; esac; done
   [ ${#want[@]} -gt 0 ] || die "что собрать? пример: sudo creeper farm build dwm"
   need_root "farm build"; farm_init
-  for a in "${want[@]}"; do [[ $a =~ ^[a-z0-9][a-z0-9._+-]*$ ]] || die "плохое имя пакета: $a"; done
+  for a in "${want[@]}"; do [[ $a =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || die "плохое имя пакета: $a"; done
 
   # рецепты (с зависимостями) должны быть в репозитории и совпадать с твоими
   local -A seen=(); local -a queue=("${want[@]}") todo=(); local p d lsha
