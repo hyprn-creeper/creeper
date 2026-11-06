@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       what:
-        description: "discord | kernel | urls | lfs-discord | blfs:раздел/страница,раздел/страница"
+        description: "discord | kernel | urls | lfs-discord | blfs:раздел/страница,... | ls:URL,URL"
         required: true
         type: string
 
@@ -129,3 +129,10 @@ jobs:
           sudo chroot $R /usr/bin/env -i HOME=/root PATH=/usr/bin:/usr/sbin /bin/bash -c 'cd /root/.config/discord/app-*/ && timeout 30 ./Discord --version --no-sandbox' 2>&1 | tail -n 15
           for m in run sys proc dev/pts dev; do sudo umount $R/$m || true; done
 
+      - name: Список файлов по ссылке
+        if: startsWith(env.WHAT, 'ls:')
+        run: |
+          for u in $(echo "${WHAT#ls:}" | tr ',' ' '); do
+            echo "== $u"
+            curl -fsSL "$u" | grep -oE 'href="[^"?]+"' | sed 's/^href="//; s/"$//' | sort -uV | tail -n 25
+          done
