@@ -1,0 +1,8 @@
+name=sbc
+version=2.0
+desc="кодек SBC — звук через Bluetooth-наушники"
+source=(https://www.kernel.org/pub/linux/bluetooth/sbc-$version.tar.xz)
+depends=()
+
+build() { ./configure --prefix=/usr --disable-static --disable-tester; make; }
+package() { make DESTDIR="$PKG" install; }

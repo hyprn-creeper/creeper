@@ -1,14 +1,15 @@
 name=pulseaudio
 version=17.0
+release=2
 desc="звуковой сервер PulseAudio (голос в Discord)"
 source=(https://www.freedesktop.org/software/pulseaudio/releases/pulseaudio-$version.tar.xz)
-depends=(libsndfile alsa-lib dbus glib libX11 libXtst libICE libSM)
+depends=(libsndfile alsa-lib dbus glib bluez sbc libX11 libXtst libICE libSM)
 
 build() {
   mkdir -p build && cd build
   meson setup .. --prefix=/usr --buildtype=release \
         -D database=gdbm -D doxygen=false -D man=false -D tests=false \
-        -D bluez5=disabled -D systemd=disabled -D elogind=disabled -D consolekit=disabled \
+        -D bluez5=enabled -D bluez5-native-headset=true -D bluez5-ofono-headset=false -D bluez5-gstreamer=disabled -D systemd=disabled -D elogind=disabled -D consolekit=disabled \
         -D gtk=disabled -D jack=disabled -D lirc=disabled -D avahi=disabled -D tcpwrap=disabled \
         -D orc=disabled -D soxr=disabled -D speex=disabled -D fftw=disabled -D webrtc-aec=disabled \
         -D gsettings=disabled -D valgrind=disabled -D asyncns=disabled -D gstreamer=disabled \
