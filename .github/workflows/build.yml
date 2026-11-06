@@ -81,6 +81,14 @@ jobs:
           sudo chroot "$R" /usr/bin/env -i HOME=/root TERM=dumb PATH=/usr/bin:/usr/sbin \
             /bin/bash -c "creeper install $flags $PKGS"
 
+      - name: Хвост лога упавшего пакета
+        if: failure()
+        run: |
+          f=$(sudo ls -t "$R"/var/log/creeper/*.log 2>/dev/null | grep -v history.log | head -n 1)
+          [ -n "$f" ] || exit 0
+          echo "== ${f##*/} (последние 80 строк) =="
+          sudo tail -n 80 "$f" | sed 's/^/LOG| /'
+
       - name: Логи сборки
         if: always()
         uses: actions/upload-artifact@v6
