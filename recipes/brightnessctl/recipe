@@ -1,0 +1,21 @@
+name=brightnessctl
+version=0.5.1
+desc="яркость экрана и подсветки клавиатуры (brightnessctl set 10%+)"
+source=(brightnessctl-$version.tar.gz::https://github.com/Hummer12007/brightnessctl/archive/refs/tags/$version.tar.gz)
+depends=()
+
+build() {
+  # без logind: права даёт udev-правило (группа video)
+  make CC=gcc PREFIX=/usr ENABLE_SYSTEMD=0
+}
+package() {
+  make DESTDIR="$PKG" PREFIX=/usr INSTALL_UDEV_RULES=1 UDEVDIR=/usr/lib/udev/rules.d install
+  if [ ! -f "$PKG/usr/lib/udev/rules.d/90-brightnessctl.rules" ]; then
+    install -Dm644 90-brightnessctl.rules "$PKG/usr/lib/udev/rules.d/90-brightnessctl.rules"
+  fi
+}
+post_install() {
+  udevadm control --reload 2>/dev/null; udevadm trigger -s backlight 2>/dev/null
+  echo "Нужна группа video (у hyprn уже есть). Пример: brightnessctl set 50%"
+  true
+}

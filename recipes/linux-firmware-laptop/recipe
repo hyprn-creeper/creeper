@@ -1,0 +1,27 @@
+name=linux-firmware-laptop
+version=20261019
+desc="прошивки для ноутбука: Intel UHD (i915), Wi-Fi/BT Realtek, Ethernet Realtek, regulatory.db"
+source=(https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-$version.tar.xz)
+depends=()
+
+build() { :; }
+package() {
+  local fw="$PKG/usr/lib/firmware"
+  install -dm755 "$fw"
+  # только нужное этому ноутбуку (весь пакет — больше 1 ГБ)
+  for d in i915 rtw88 rtl_bt rtl_nic; do
+    [ -d "$d" ] && cp -a "$d" "$fw/"
+  done
+  cp -a regulatory.db regulatory.db.p7s "$fw/" 2>/dev/null || true
+  for f in LICENCE.i915 LICENCE.rtlwifi_firmware.txt LICENCE.Realtek WHENCE; do
+    [ -f "$f" ] && install -Dm644 "$f" "$PKG/usr/share/licenses/linux-firmware/$f"
+  done
+  # .zst/.xz-сжатые файлы ядро без FW_LOADER_COMPRESS не читает — распаковать
+  find "$fw" -name '*.zst' -exec zstd -dq --rm {} \; 2>/dev/null || true
+  find "$fw" -name '*.xz'  -exec xz -dq {} \; 2>/dev/null || true
+  [ -f "$fw/i915/kbl_dmc_ver1_04.bin" ] || [ -n "$(ls "$fw"/i915/kbl_dmc* 2>/dev/null)" ] || { echo "нет i915/kbl_dmc"; return 1; }
+}
+post_install() {
+  echo "Прошивки встанут при следующей загрузке. Проверка: dmesg | grep -iE 'firmware|dmc'"
+  true
+}
