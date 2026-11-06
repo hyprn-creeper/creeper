@@ -10,5 +10,5 @@ prepare() {
   cp config.def.h config.h
   sed -i 's/"monospace:size=10"/"DejaVu Sans Mono:size=11"/' config.h
 }
-build()   { make; }
+build()   { make CC=gcc; }
 package() { make PREFIX=/usr DESTDIR="$PKG" install; }

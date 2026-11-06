@@ -12,5 +12,5 @@ prepare() {
   sed -i 's/#define MODKEY Mod1Mask/#define MODKEY Mod4Mask/' config.h
   sed -i 's/"monospace:size=10"/"DejaVu Sans Mono:size=11"/g' config.h
 }
-build()   { make; }
+build()   { make CC=gcc; }
 package() { make PREFIX=/usr DESTDIR="$PKG" install; }

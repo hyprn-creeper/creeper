@@ -251,7 +251,7 @@ prepare() {{
   sed -i 's/#define MODKEY Mod1Mask/#define MODKEY Mod4Mask/' config.h
   sed -i 's/"monospace:size=10"/"DejaVu Sans Mono:size=11"/g' config.h
 }}
-build()   {{ make; }}
+build()   {{ make CC=gcc; }}
 package() {{ make PREFIX=/usr DESTDIR="$PKG" install; }}
 ''')
 
@@ -269,7 +269,7 @@ prepare() {{
   # terminfo ставим сами в $PKG, а не в систему сборщика
   sed -i '/tic -sx st.info/d' Makefile
 }}
-build()   {{ make; }}
+build()   {{ make CC=gcc; }}
 package() {{
   make PREFIX=/usr DESTDIR="$PKG" install
   install -dm755 "$PKG/usr/share/terminfo"
@@ -289,7 +289,7 @@ prepare() {{
   cp config.def.h config.h
   sed -i 's/"monospace:size=10"/"DejaVu Sans Mono:size=11"/' config.h
 }}
-build()   {{ make; }}
+build()   {{ make CC=gcc; }}
 package() {{ make PREFIX=/usr DESTDIR="$PKG" install; }}
 ''')
 
@@ -318,7 +318,7 @@ s = re.sub(r"static const struct arg args\\[\\] = \\{{.*?\\n\\}};", args, s, fla
 open("config.h", "w").write(s)
 PY
 }}
-build()   {{ make; }}
+build()   {{ make CC=gcc; }}
 package() {{ make PREFIX=/usr DESTDIR="$PKG" install; }}
 ''')
 

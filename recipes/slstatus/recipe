@@ -22,5 +22,5 @@ s = re.sub(r"static const struct arg args\[\] = \{.*?\n\};", args, s, flags=re.S
 open("config.h", "w").write(s)
 PY
 }
-build()   { make; }
+build()   { make CC=gcc; }
 package() { make PREFIX=/usr DESTDIR="$PKG" install; }

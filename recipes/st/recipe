@@ -12,7 +12,7 @@ prepare() {
   # terminfo ставим сами в $PKG, а не в систему сборщика
   sed -i '/tic -sx st.info/d' Makefile
 }
-build()   { make; }
+build()   { make CC=gcc; }
 package() {
   make PREFIX=/usr DESTDIR="$PKG" install
   install -dm755 "$PKG/usr/share/terminfo"
