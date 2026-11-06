@@ -1,5 +1,6 @@
 name=hyprn-audio
 version=1.0
+release=2
 desc="настройка звука Hyprn: USB-гарнитуры в PulseAudio + команда mic (проверка микрофона)"
 source=()
 depends=(pulseaudio alsa-utils)
@@ -25,7 +26,9 @@ for n in $(sed -n 's/^ *\([0-9]*\) \[.*/\1/p' /proc/asound/cards); do
 done
 # включить микрофон и наушники в микшерах всех карт
 for c in $(sed -n 's/^ *\([0-9]*\) \[.*/\1/p' /proc/asound/cards); do
-  amixer -q -c "$c" sset Mic 100% unmute cap 2>/dev/null
+  # как в Arch: запись около +3 dB (на максимуме голос тонет в шуме), самопрослушивание выкл
+  amixer -q -c "$c" sset Mic capture 10% cap 2>/dev/null
+  amixer -q -c "$c" sset Mic playback 0% mute 2>/dev/null
   amixer -q -c "$c" sset Capture 80% cap 2>/dev/null
   amixer -q -c "$c" sset Headphone 80% unmute 2>/dev/null
 done
