@@ -14,9 +14,11 @@ build() {
 package() {
   cd dist
   install -dm755 "$PKG/usr/lib/pkgconfig" "$PKG/usr/include/nss" "$PKG/usr/bin"
-  install -v -m755 Linux*/lib/*.so "$PKG/usr/lib"
+  install -m755 Linux*/lib/*.so "$PKG/usr/lib"
   install -v -m644 Linux*/lib/*.chk "$PKG/usr/lib"
-  cp -v -RL public/nss/* private/nss/* "$PKG/usr/include/nss"
-  install -v -m755 Linux*/bin/{certutil,nss-config,pk12util} "$PKG/usr/bin"
+  cp -RL public/nss/* private/nss/* "$PKG/usr/include/nss"
+  install -m755 Linux*/bin/{certutil,nss-config,pk12util} "$PKG/usr/bin"
   install -v -m644 Linux*/lib/pkgconfig/nss.pc "$PKG/usr/lib/pkgconfig"
+  # libnssckbi.so — ссылка от p11-kit (общее хранилище сертификатов), как в BLFS
+  rm -f "$PKG/usr/lib/libnssckbi.so"
 }
