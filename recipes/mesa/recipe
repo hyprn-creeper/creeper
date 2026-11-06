@@ -1,11 +1,11 @@
 name=mesa
-version=24.1.7
+version=23.3.6
 desc="Mesa: OpenGL, EGL, GBM — Intel (iris, аппаратно) + softpipe (запасной)"
 source=(https://mesa.freedesktop.org/archive/mesa-$version.tar.xz)
 depends=(libdrm python-mako python-pyyaml libX11 libXext libXfixes libXrandr libXxf86vm libxshmfence libxcb libXdamage)
 
 build() {
-  # Mesa 25+ требует для iris LLVM+libclc (часы сборки); 24.1 — последняя без них
+  # Mesa 25+ требует для iris LLVM+libclc (часы сборки); 23.3 — последняя без них
   mkdir -p build && cd build
   meson setup .. --prefix=/usr --buildtype=release \
         -D platforms=x11 -D gallium-drivers=iris,swrast -D vulkan-drivers= \
