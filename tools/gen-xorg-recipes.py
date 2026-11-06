@@ -51,10 +51,10 @@ PKGS = [
  ("xkeyboard-config", "2.45", "описания раскладок клавиатуры", f"{X}/data/xkeyboard-config/xkeyboard-config-$version.tar.xz", [], "meson", ""),
  ("xkbcomp", "1.4.7", "компилятор раскладок XKB (нужен серверу)", f"{X}/app/xkbcomp-$version.tar.xz", ["libxkbfile"], "xorg", ""),
  ("xauth", "1.1.4", "ключи доступа к X-серверу", f"{X}/app/xauth-$version.tar.xz", ["libXau", "libXext", "libXmu"], "xorg", ""),
- ("setxkbmap", "1.3.4", "переключение раскладок (us/ru)", f"{X}/app/setxkbmap-$version.tar.xz", ["libxkbfile"], "xorg", ""),
- ("xsetroot", "1.1.3", "фон рабочего стола, имя окна (статус dwm)", f"{X}/app/xsetroot-$version.tar.xz", ["libXmu", "libXcursor", "xbitmaps"], "xorg", ""),
+ ("setxkbmap", "1.3.4", "переключение раскладок (us/ru)", f"{X}/app/setxkbmap-$version.tar.xz", ["libxkbfile", "libXrandr"], "xorg", ""),
+ ("xsetroot", "1.1.3", "фон рабочего стола, имя окна (статус dwm)", f"{X}/app/xsetroot-$version.tar.xz", ["libXmu", "libXcursor", "libXfixes", "xbitmaps"], "xorg", ""),
  ("xrandr", "1.5.3", "разрешение и мониторы", f"{X}/app/xrandr-$version.tar.xz", ["libXrandr"], "xrandr", ""),
- ("xset", "1.2.5", "настройки X (клавиатура, экран)", f"{X}/app/xset-$version.tar.xz", ["libXmu", "libXext"], "xorg", ""),
+ ("xset", "1.2.5", "настройки X (клавиатура, экран)", f"{X}/app/xset-$version.tar.xz", ["libXmu", "libXext", "libXfixes"], "xorg", ""),
  ("xprop", "1.2.8", "свойства окон (отладка)", f"{X}/app/xprop-$version.tar.xz", ["libX11"], "xorg", ""),
  ("xinput", "1.6.4", "настройка мыши и тачпада", f"{X}/app/xinput-$version.tar.xz", ["libXi", "libXrandr", "libXinerama"], "xorg", ""),
  ("mtdev", "1.1.7", "мультитач для старых драйверов", "https://bitmath.org/code/mtdev/mtdev-$version.tar.bz2", [], "auto", "--prefix=/usr --disable-static"),
@@ -242,7 +242,7 @@ name=dwm
 version=6.8
 desc="dwm — плиточный оконный менеджер (suckless)"
 source=(https://dl.suckless.org/dwm/dwm-$version.tar.gz)
-depends=(libX11 libXft libXinerama)
+depends=(libX11 libXft libXinerama fontconfig freetype)
 
 prepare() {{
 {SL_MK}

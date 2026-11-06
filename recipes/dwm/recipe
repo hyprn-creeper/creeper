@@ -2,7 +2,7 @@ name=dwm
 version=6.8
 desc="dwm — плиточный оконный менеджер (suckless)"
 source=(https://dl.suckless.org/dwm/dwm-$version.tar.gz)
-depends=(libX11 libXft libXinerama)
+depends=(libX11 libXft libXinerama fontconfig freetype)
 
 prepare() {
   sed -i -e 's#^X11INC = .*#X11INC = /usr/include#' -e 's#^X11LIB = .*#X11LIB = /usr/lib#' \
