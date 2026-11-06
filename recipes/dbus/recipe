@@ -1,5 +1,6 @@
 name=dbus
 version=1.16.2
+release=2
 desc="D-Bus — обмен сообщениями между программами"
 source=(https://dbus.freedesktop.org/releases/dbus/dbus-$version.tar.xz)
 depends=(libX11 glib)
@@ -11,11 +12,47 @@ build() {
         -D modular_tests=disabled -D qt_help=disabled
   ninja -j"$JOBS"
 }
-package() { cd build && DESTDIR="$PKG" ninja install; rm -rf "${PKG:?}/var/run" "${PKG:?}/run"; }
+package() {
+  cd build && DESTDIR="$PKG" ninja install; rm -rf "${PKG:?}/var/run" "${PKG:?}/run"
+  # системная шина (SysV) — нужна PulseAudio, Bluetooth и др.
+  install -dm755 "$PKG/etc/rc.d/init.d"
+  cat > "$PKG/etc/rc.d/init.d/dbus" << 'EOS'
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:            dbus messagebus
+# Default-Start:       2 3 4 5
+# Default-Stop:        0 1 6
+# Short-Description:   D-Bus system message bus
+### END INIT INFO
+. /lib/lsb/init-functions
+pidfile=/run/dbus/pid
+case "$1" in
+  start)  log_info_msg "Starting the D-Bus Messagebus Daemon..."
+          mkdir -p /run/dbus; chown messagebus:messagebus /run/dbus 2>/dev/null
+          /usr/bin/dbus-uuidgen --ensure
+          [ -s $pidfile ] && kill -0 "$(cat $pidfile)" 2>/dev/null && { log_success_msg; exit 0; }
+          rm -f $pidfile /run/dbus/system_bus_socket
+          /usr/bin/dbus-daemon --system; evaluate_retval ;;
+  stop)   log_info_msg "Stopping the D-Bus Messagebus Daemon..."
+          [ -s $pidfile ] && kill "$(cat $pidfile)" 2>/dev/null; rm -f $pidfile /run/dbus/system_bus_socket
+          log_success_msg ;;
+  restart) $0 stop; sleep 1; $0 start ;;
+  status) [ -s $pidfile ] && kill -0 "$(cat $pidfile)" 2>/dev/null && echo "dbus работает" || echo "dbus не запущен" ;;
+  *)      echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
+EOS
+  chmod 754 "$PKG/etc/rc.d/init.d/dbus"
+}
 post_install() {
   getent group messagebus >/dev/null || groupadd -g 18 messagebus
   getent passwd messagebus >/dev/null || useradd -c "D-Bus Message Daemon User" -d /run/dbus -u 18 -g messagebus -s /bin/false messagebus
   chown root:messagebus /usr/libexec/dbus-daemon-launch-helper && chmod 4750 /usr/libexec/dbus-daemon-launch-helper
   dbus-uuidgen --ensure
   ln -sf /var/lib/dbus/machine-id /etc/machine-id
+  # включить при загрузке и запустить сейчас (на ферме /run/dbus не нужен)
+  for r in 2 3 4 5; do ln -sf ../init.d/dbus /etc/rc.d/rc$r.d/S29dbus 2>/dev/null; done
+  for r in 0 1 6; do ln -sf ../init.d/dbus /etc/rc.d/rc$r.d/K30dbus 2>/dev/null; done
+  [ -e /dev/snd ] && /etc/rc.d/init.d/dbus start >/dev/null 2>&1
+  true
 }
+pre_blow() { /etc/rc.d/init.d/dbus stop >/dev/null 2>&1; rm -f /etc/rc.d/rc?.d/[SK]*dbus; true; }

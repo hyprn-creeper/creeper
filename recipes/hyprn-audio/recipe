@@ -1,21 +1,15 @@
 name=hyprn-audio
 version=1.0
-release=2
+release=3
 desc="настройка звука Hyprn: USB-гарнитуры в PulseAudio + команда mic (проверка микрофона)"
 source=()
 depends=(pulseaudio alsa-utils)
 
 build() { :; }
 package() {
-  install -dm755 "$PKG/etc/pulse/default.pa.d" "$PKG/etc/pulse/daemon.conf.d" "$PKG/usr/bin"
+  install -dm755 "$PKG/etc/pulse/daemon.conf.d" "$PKG/usr/bin"
   # не выключаться без клиентов — иначе ручные настройки пропадают
   echo 'exit-idle-time = -1' > "$PKG/etc/pulse/daemon.conf.d/90-hyprn.conf"
-  cat > "$PKG/etc/pulse/default.pa.d/90-hyprn-usb.pa" << 'EOS'
-# USB-гарнитура fifine (имя карты Headset); если её нет — просто пропуск
-.nofail
-load-module module-alsa-card device_id=Headset
-.fail
-EOS
   cat > "$PKG/usr/bin/mic" << 'EOS'
 #!/bin/sh
 # mic — подключить все звуковые карты к PulseAudio, выбрать USB-микрофон, проверить запись
