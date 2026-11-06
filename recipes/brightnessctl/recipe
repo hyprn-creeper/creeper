@@ -1,5 +1,6 @@
 name=brightnessctl
 version=0.5.1
+release=2
 desc="яркость экрана и подсветки клавиатуры (brightnessctl set 10%+)"
 source=(brightnessctl-$version.tar.gz::https://github.com/Hummer12007/brightnessctl/archive/refs/tags/$version.tar.gz)
 depends=()
@@ -9,7 +10,8 @@ build() {
   gcc -O2 -std=c99 -Wall -D_POSIX_C_SOURCE=200809L -DVERSION=\"$version\" brightnessctl.c -lm -o brightnessctl
 }
 package() {
-  install -Dm755 brightnessctl "$PKG/usr/bin/brightnessctl"
+  # setuid: без logind udev-правило срабатывает не всегда, а писать в /sys/class/backlight может только root
+  install -Dm4755 brightnessctl "$PKG/usr/bin/brightnessctl"
   install -Dm644 90-brightnessctl.rules "$PKG/usr/lib/udev/rules.d/90-brightnessctl.rules"
   [ -f brightnessctl.1 ] && install -Dm644 brightnessctl.1 "$PKG/usr/share/man/man1/brightnessctl.1"
   true
