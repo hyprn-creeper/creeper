@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       what:
-        description: "discord | kernel | blfs:раздел/страница,раздел/страница"
+        description: "discord | kernel | urls | blfs:раздел/страница,раздел/страница"
         required: true
         type: string
 
@@ -87,4 +87,20 @@ jobs:
                   print("--")
           PY
           python3 /tmp/blfs.py "${WHAT#blfs:}"
+
+      - uses: actions/checkout@v5
+        if: env.WHAT == 'urls'
+      - name: Проверка ссылок всех рецептов
+        if: env.WHAT == 'urls'
+        run: |
+          bad=0
+          for r in recipes/*/recipe; do
+            while read -r s; do
+              [ -n "$s" ] || continue
+              u=${s#*::}
+              code=$(curl -sL -o /dev/null -r 0-0 -w '%{http_code}' --connect-timeout 20 --max-time 60 "$u")
+              case $code in 200|206) ;; *) echo "ПЛОХО $code ${r%/recipe} $u"; bad=$((bad+1));; esac
+            done < <(bash -c '. "$1" >/dev/null 2>&1; printf "%s\n" "${source[@]}"' _ "$r")
+          done
+          echo "плохих ссылок: $bad"
 
