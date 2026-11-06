@@ -55,6 +55,23 @@ sudo creeper new https://…/foo-1.0.tar.xz && sudo creeper farm build foo   # �
 
 Рецепты Xorg генерируются: `python3 tools/gen-xorg-recipes.py`.
 
+## Discord
+
+`sudo creeper install discord` → ~40 пакетов с фермы (GTK3, NSS, Mesa, PulseAudio, D-Bus...)
+и загрузчик Discord. Само приложение скачивается при первом запуске в `~/.config/discord`
+(рецепт помечен `norepo=1`: закрытая программа на ферму не выкладывается).
+Для голоса: `sudo usermod -aG audio $USER`. Лог: `~/.local/share/discord.log`.
+
+## Ядро
+
+`sudo creeper install linux` → ядро 7.2.15-lfs с конфигом Arch (NVMe и ext4 встроены, без initramfs),
+ставится рядом со старым. Пункт GRUB добавляется в Arch: `sudo bash tools/lfs-grub-add.sh 7.2.15-lfs`.
+
+## Зонд
+
+`.github/workflows/probe.yml`: `discord` (какие библиотеки нужны), `lfs-discord` (проверка в копии LFS),
+`urls` (все ссылки рецептов), `kernel`, `blfs:раздел/страница` (команды со страниц BLFS).
+
 ## Рецепт
 
 ```bash
