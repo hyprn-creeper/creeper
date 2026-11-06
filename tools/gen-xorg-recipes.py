@@ -109,6 +109,20 @@ package() {{
   rm -f "$PKG/usr/bin/xkeystone"     # как в BLFS: без cairo-5c/nickle не работает
 }}
 '''
+    elif kind == "meson" and name == "xorgproto":
+        body = f'''
+build() {{
+  mkdir -p build && cd build
+  meson setup --prefix=/usr --buildtype=release {extra} ..
+  ninja -j"$JOBS"
+}}
+package() {{
+  cd build && DESTDIR="$PKG" ninja install
+  # этот заголовок ставит libX11 — пусть он им и владеет
+  rm -f "$PKG/usr/include/X11/extensions/XKBgeom.h"
+}}
+'''
+        head = head.replace("version=", "release=2\nversion=", 1)
     elif kind == "meson":
         body = f'''
 build() {{

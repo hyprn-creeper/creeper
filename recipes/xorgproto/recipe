@@ -1,4 +1,5 @@
 name=xorgproto
+release=2
 version=2024.1
 desc="заголовки протоколов X11"
 source=(https://xorg.freedesktop.org/archive/individual/proto/xorgproto-$version.tar.xz)
@@ -9,4 +10,8 @@ build() {
   meson setup --prefix=/usr --buildtype=release -D legacy=true ..
   ninja -j"$JOBS"
 }
-package() { cd build && DESTDIR="$PKG" ninja install; }
+package() {
+  cd build && DESTDIR="$PKG" ninja install
+  # этот заголовок ставит libX11 — пусть он им и владеет
+  rm -f "$PKG/usr/include/X11/extensions/XKBgeom.h"
+}
