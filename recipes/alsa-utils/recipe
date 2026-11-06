@@ -1,5 +1,6 @@
 name=alsa-utils
 version=1.2.14
+release=2
 desc="звук ALSA: alsamixer, amixer, arecord, aplay, alsactl (сохранение громкости)"
 source=(https://www.alsa-project.org/files/pub/utils/alsa-utils-$version.tar.bz2)
 depends=(alsa-lib)
@@ -37,11 +38,11 @@ post_install() {
   ln -sf ../init.d/alsa /etc/rc.d/rc5.d/S95alsa 2>/dev/null
   # если звуковая карта есть — включить запись и динамики
   if [ -e /dev/snd/controlC0 ]; then
-    amixer -q -c0 sset Master 80% unmute 2>/dev/null
-    amixer -q -c0 sset Speaker 100% unmute 2>/dev/null
-    amixer -q -c0 sset Capture 80% cap 2>/dev/null
-    amixer -q -c0 sset 'Internal Mic Boost' 1 2>/dev/null
-    alsactl store 2>/dev/null
+    amixer -q -c0 sset Master 80% unmute 2>/dev/null || true
+    amixer -q -c0 sset Speaker 100% unmute 2>/dev/null || true
+    amixer -q -c0 sset Capture 80% cap 2>/dev/null || true
+    amixer -q -c0 sset 'Internal Mic Boost' 1 2>/dev/null || true
+    alsactl store 2>/dev/null || true
   fi
   echo "Микшер: alsamixer (F4 — запись; пробел включает Capture). Проверка микрофона: arecord -d5 /tmp/t.wav && aplay /tmp/t.wav"
   true
