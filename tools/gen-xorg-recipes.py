@@ -185,18 +185,18 @@ post_install() { fc-cache -f >/dev/null 2>&1 || true; }
 write("xorg-server", '''
 name=xorg-server
 version=21.1.18
-release=2
-desc="X-сервер Xorg (modesetting, без Mesa: программная отрисовка)"
+release=3
+desc="X-сервер Xorg (modesetting + glamor: ускорение видеокартой через Mesa)"
 source=(https://www.x.org/pub/individual/xserver/xorg-server-$version.tar.xz)
-depends=(pixman libxcvt libXfont2 libxkbfile libdrm libpciaccess libxshmfence font-util xtrans libXau libXdmcp xkeyboard-config xkbcomp)
+depends=(pixman libxcvt libXfont2 libxkbfile libdrm libpciaccess libxshmfence font-util xtrans libXau libXdmcp xkeyboard-config xkbcomp mesa libepoxy)
 backup=(etc/X11/Xwrapper.config)
 
 build() {
   mkdir -p build && cd build
   # без elogind/dbus (SysV) сервер работает от root через Xorg.wrap;
-  # glamor и GLX выключены — для них нужна Mesa (добавим позже вместе с GTK)
+  # glamor (2D через OpenGL) и GLX — ускорение видеокартой через Mesa (iris)
   meson setup .. --prefix=/usr --localstatedir=/var --buildtype=release \\
-        -D glamor=false -D glx=false -D systemd_logind=false -D suid_wrapper=true \\
+        -D glamor=true -D glx=true -D systemd_logind=false -D suid_wrapper=true \\
         -D secure-rpc=false -D xkb_output_dir=/var/lib/xkb
   ninja -j"$JOBS"
 }
