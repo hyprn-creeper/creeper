@@ -1,14 +1,14 @@
 name=mesa
 version=25.1.8
-desc="Mesa: OpenGL, EGL, GBM (программная отрисовка softpipe)"
+release=2
+desc="Mesa: OpenGL, EGL, GBM — Intel (iris, аппаратно) + softpipe (запасной)"
 source=(https://mesa.freedesktop.org/archive/mesa-$version.tar.xz)
 depends=(libdrm python-mako python-pyyaml libX11 libXext libXfixes libXrandr libXxf86vm libxshmfence libxcb libXdamage)
 
 build() {
   mkdir -p build && cd build
-  # драйвер Intel (iris) требует LLVM + libclc — добавим отдельным этапом
   meson setup .. --prefix=/usr --buildtype=release \
-        -D platforms=x11 -D gallium-drivers=softpipe -D vulkan-drivers= \
+        -D platforms=x11 -D gallium-drivers=iris,softpipe -D vulkan-drivers= \
         -D llvm=disabled -D valgrind=disabled -D libunwind=disabled \
         -D video-codecs= -D gbm=enabled -D egl=enabled -D glx=dri -D gles2=enabled
   ninja -j"$JOBS"
