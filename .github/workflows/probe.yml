@@ -27,21 +27,37 @@ jobs:
       - name: Discord
         if: env.WHAT == 'discord'
         run: |
+          sudo apt-get install -y -qq xvfb >/dev/null 2>&1 || true
           cd /tmp
           curl -fsSL -o discord.tar.gz -w 'URL: %{url_effective}\n' 'https://discord.com/api/download?platform=linux&format=tar.gz'
           tar -xzf discord.tar.gz
-          ls Discord
-          echo "== resources/build_info.json"; cat Discord/resources/build_info.json || true
-          echo "== NEEDED (все ELF в пакете)"
-          find Discord -type f -exec sh -c 'file -b "$1" | grep -q ELF && readelf -d "$1" 2>/dev/null | sed -n "s/.*Shared library: \[\(.*\)\]/\1/p"' _ {} \; | sort -u
-          echo "== бандл (свои .so)"; find Discord -name '*.so*' -printf '%f\n' | sort
-          echo "== Electron"; strings Discord/Discord | grep -m3 -E '^Electron/|Chrome/[0-9]+' || true
-          echo "== dlopen-строки"; strings Discord/Discord | grep -E '^lib[a-z0-9_+-]+\.so(\.[0-9]+)*$' | sort -u | head -n 80
+          ls -la Discord; file Discord/*
+          echo "== postinst.sh"; cat Discord/postinst.sh
+          echo "== discord.desktop"; cat Discord/discord.desktop
+          [ -f Discord/discord ] && ! file -b Discord/discord | grep -q ELF && { echo "== discord (скрипт)"; cat Discord/discord; }
+          echo "== строки загрузчика"; strings -n 8 Discord/updater_bootstrap | grep -iE 'https?://|\.config|XDG|HOME|discord_|--' | sort -u | head -n 60
+          echo "== пробный запуск загрузчика (90 с, виртуальный экран)"
+          export HOME=/tmp/h; mkdir -p $HOME
+          ( cd Discord && timeout 90 xvfb-run -a ./discord --no-sandbox ) > /tmp/run.log 2>&1 || true
+          tail -n 40 /tmp/run.log
+          echo "== что скачалось"; find $HOME -maxdepth 6 -type d | head -n 40
+          app=$(find $HOME -type f -name 'Discord' -perm -u+x 2>/dev/null | head -n1)
+          [ -z "$app" ] && app=$(find $HOME -type f -perm -u+x -size +50M 2>/dev/null | head -n1)
+          echo "== приложение: $app"
+          if [ -n "$app" ]; then
+            d=$(dirname "$app")
+            echo "== NEEDED приложения"
+            find "$d" -type f -exec sh -c 'file -b "$1" | grep -q ELF && readelf -d "$1" 2>/dev/null | sed -n "s/.*Shared library: \[\(.*\)\]/\1/p"' _ {} \; | sort -u
+            echo "== свои .so"; find "$d" -maxdepth 2 -name '*.so*' -printf '%f\n' | sort
+            echo "== Electron"; strings "$app" | grep -m3 -E '^Electron/|Chrome/[0-9]+\.' || true
+            echo "== dlopen"; strings "$app" | grep -E '^lib[a-z0-9_+-]+\.so(\.[0-9]+)*$' | sort -u | head -n 80
+          fi
 
       - name: Kernel
         if: env.WHAT == 'kernel'
         run: |
           curl -fsSL https://www.kernel.org/releases.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('latest_stable', d['latest_stable']['version']); [print(r['moniker'], r['version']) for r in d['releases'][:8]]"
           curl -fsSL https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/main/PKGBUILD | grep -E '^(pkgver|pkgrel)='
-          curl -fsSL -o /tmp/config https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/main/config
+          for f in config config.x86_64; do curl -fsSL -o /tmp/config "https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/main/$f" && { echo "конфиг Arch: $f"; break; }; done
+          curl -fsSL "https://gitlab.archlinux.org/api/v4/projects/archlinux%2Fpackaging%2Fpackages%2Flinux/repository/tree?ref=main" | python3 -c "import json,sys; print([x['name'] for x in json.load(sys.stdin)])"
           head -n 4 /tmp/config; grep -E 'CONFIG_(MODULE_COMPRESS|MODULE_SIG|DEBUG_INFO|RTW88_8821CE|BLK_DEV_NVME|EXT4_FS|DRM_I915)[ =]' /tmp/config
