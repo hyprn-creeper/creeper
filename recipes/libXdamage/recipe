@@ -1,0 +1,11 @@
+name=libXdamage
+version=1.1.6
+desc="расширение DAMAGE"
+source=(https://www.x.org/pub/individual/lib/libXdamage-$version.tar.xz)
+depends=(libXfixes)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libXdamage-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

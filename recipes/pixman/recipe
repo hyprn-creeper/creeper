@@ -1,0 +1,12 @@
+name=pixman
+version=0.46.4
+desc="работа с пикселями (рисование)"
+source=(https://www.cairographics.org/releases/pixman-$version.tar.gz)
+depends=()
+
+build() {
+  mkdir -p build && cd build
+  meson setup --prefix=/usr --buildtype=release  ..
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

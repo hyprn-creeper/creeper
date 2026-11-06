@@ -1,0 +1,11 @@
+name=libXinerama
+version=1.1.5
+desc="несколько мониторов (Xinerama)"
+source=(https://www.x.org/pub/individual/lib/libXinerama-$version.tar.xz)
+depends=(libXext)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libXinerama-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

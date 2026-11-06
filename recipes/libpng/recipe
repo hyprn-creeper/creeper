@@ -1,0 +1,11 @@
+name=libpng
+version=1.6.50
+desc="картинки PNG"
+source=(https://downloads.sourceforge.net/libpng/libpng-$version.tar.xz)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --disable-static
+  make
+}
+package() { make DESTDIR="$PKG" install; }

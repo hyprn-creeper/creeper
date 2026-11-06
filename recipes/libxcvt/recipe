@@ -1,0 +1,12 @@
+name=libxcvt
+version=0.1.3
+desc="расчёт видеорежимов VESA CVT"
+source=(https://www.x.org/pub/individual/lib/libxcvt-$version.tar.xz)
+depends=()
+
+build() {
+  mkdir -p build && cd build
+  meson setup --prefix=/usr --buildtype=release  ..
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

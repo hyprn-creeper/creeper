@@ -1,0 +1,11 @@
+name=util-macros
+version=1.20.2
+desc="макросы autoconf для пакетов X.org"
+source=(https://www.x.org/pub/individual/util/util-macros-$version.tar.xz)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/util-macros-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

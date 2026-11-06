@@ -1,0 +1,11 @@
+name=libXft
+version=2.3.9
+desc="сглаженные шрифты X11 (Xft)"
+source=(https://www.x.org/pub/individual/lib/libXft-$version.tar.xz)
+depends=(libXrender fontconfig)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libXft-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

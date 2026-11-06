@@ -1,0 +1,12 @@
+name=dejavu-fonts
+version=2.37
+desc="шрифты DejaVu (кириллица, моноширинный для терминала)"
+source=(https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-$version.tar.bz2)
+depends=(fontconfig)
+
+build() { :; }
+package() {
+  install -dm755 "$PKG/usr/share/fonts/dejavu"
+  install -m644 ttf/*.ttf "$PKG/usr/share/fonts/dejavu/"
+}
+post_install() { fc-cache -f >/dev/null 2>&1 || true; }

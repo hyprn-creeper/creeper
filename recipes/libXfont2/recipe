@@ -1,0 +1,11 @@
+name=libXfont2
+version=2.0.7
+desc="шрифты для X-сервера"
+source=(https://www.x.org/pub/individual/lib/libXfont2-$version.tar.xz)
+depends=(libfontenc freetype xtrans)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libXfont2-$version --disable-devel-docs
+  make
+}
+package() { make DESTDIR="$PKG" install; }

@@ -1,0 +1,11 @@
+name=font-util
+version=1.4.1
+desc="утилиты шрифтов X.org"
+source=(https://www.x.org/pub/individual/font/font-util-$version.tar.xz)
+depends=(util-macros)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/font-util-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

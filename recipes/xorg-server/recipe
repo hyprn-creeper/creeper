@@ -1,0 +1,33 @@
+name=xorg-server
+version=21.1.18
+desc="X-сервер Xorg (modesetting, без Mesa: программная отрисовка)"
+source=(https://www.x.org/pub/individual/xserver/xorg-server-$version.tar.xz)
+depends=(pixman libxcvt libXfont2 libxkbfile libdrm libpciaccess libxshmfence font-util xtrans libXau libXdmcp xkeyboard-config xkbcomp)
+backup=(etc/X11/Xwrapper.config)
+
+build() {
+  mkdir -p build && cd build
+  # без elogind/dbus (SysV) сервер работает от root через Xorg.wrap;
+  # glamor выключен — для него нужна Mesa (добавим позже вместе с GTK)
+  meson setup .. --prefix=/usr --localstatedir=/var --buildtype=release \
+        -D glamor=false -D systemd_logind=false -D suid_wrapper=true \
+        -D secure-rpc=false -D xkb_output_dir=/var/lib/xkb
+  ninja -j"$JOBS"
+}
+package() {
+  cd build && DESTDIR="$PKG" ninja install
+  install -dm755 "$PKG/etc/X11/xorg.conf.d"
+  cat > "$PKG/etc/X11/Xwrapper.config" << "EOF"
+# без elogind X-серверу нужны права root (запуск через startx с консоли)
+needs_root_rights = yes
+allowed_users = console
+EOF
+  chmod 4755 "$PKG/usr/libexec/Xorg.wrap" 2>/dev/null || true
+}
+post_install() {
+  install -dm1777 /tmp/.ICE-unix /tmp/.X11-unix
+  grep -q '/tmp/.X11-unix' /etc/sysconfig/createfiles 2>/dev/null || cat >> /etc/sysconfig/createfiles << "EOF"
+/tmp/.ICE-unix dir 1777 root root
+/tmp/.X11-unix dir 1777 root root
+EOF
+}

@@ -1,0 +1,11 @@
+name=libXau
+version=1.0.12
+desc="авторизация X11"
+source=(https://www.x.org/pub/individual/lib/libXau-$version.tar.xz)
+depends=(xorgproto)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libXau-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

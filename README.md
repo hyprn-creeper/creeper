@@ -27,6 +27,34 @@ creeper search | info | list | deps | files | owns | verify | history
 | `new <url>` | заготовка рецепта по ссылке на архив |
 | `log <п>` / `history` | лог сборки / журнал установок и удалений |
 
+## Ферма прямо из LFS
+
+```
+sudo creeper farm token            # один раз: fine-grained токен (Actions + Contents: Read and write)
+sudo creeper farm build hyprn-dwm  # собрать на GitHub, дождаться, поставить
+sudo creeper farm status           # последние сборки
+sudo creeper new https://…/foo-1.0.tar.xz && sudo creeper farm build foo   # свой пакет
+```
+
+`farm build` сам отправляет в репозиторий рецепты, которых там нет или которые у тебя новее.
+
+## Рабочий стол: dwm
+
+`sudo creeper farm build hyprn-dwm` → 52 пакета: Xorg 21.1 (modesetting, без Mesa), libinput,
+шрифты DejaVu, dwm 6.8, st 0.9.3, dmenu 5.4, slstatus 1.1. Запуск с консоли: `startdwm`.
+
+| Клавиши | Действие |
+|---|---|
+| Super+Shift+Enter | терминал st |
+| Super+P | меню программ (dmenu) |
+| Super+J / Super+K | следующее / предыдущее окно |
+| Super+Shift+C | закрыть окно |
+| Super+1…9 | рабочие столы |
+| Alt+Shift | раскладка us/ru |
+| Super+Shift+Q | выйти из dwm |
+
+Рецепты Xorg генерируются: `python3 tools/gen-xorg-recipes.py`.
+
 ## Рецепт
 
 ```bash

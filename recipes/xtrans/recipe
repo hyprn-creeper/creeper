@@ -1,0 +1,11 @@
+name=xtrans
+version=1.6.0
+desc="сетевой транспорт X11"
+source=(https://www.x.org/pub/individual/lib/xtrans-$version.tar.xz)
+depends=(util-macros)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/xtrans-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

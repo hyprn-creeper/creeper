@@ -1,0 +1,11 @@
+name=xf86-input-libinput
+version=1.5.0
+desc="драйвер ввода Xorg через libinput"
+source=(https://www.x.org/pub/individual/driver/xf86-input-libinput-$version.tar.xz)
+depends=(libinput xorg-server)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/xf86-input-libinput-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

@@ -1,0 +1,11 @@
+name=libXcursor
+version=1.2.3
+desc="курсоры X11"
+source=(https://www.x.org/pub/individual/lib/libXcursor-$version.tar.xz)
+depends=(libXrender libXfixes)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libXcursor-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

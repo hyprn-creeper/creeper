@@ -1,0 +1,11 @@
+name=libfontenc
+version=1.1.8
+desc="кодировки шрифтов X11"
+source=(https://www.x.org/pub/individual/lib/libfontenc-$version.tar.xz)
+depends=(xorgproto)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libfontenc-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

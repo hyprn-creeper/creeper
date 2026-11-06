@@ -1,0 +1,13 @@
+name=fontconfig
+version=2.17.1
+desc="поиск и настройка шрифтов"
+source=(https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/$version/fontconfig-$version.tar.xz)
+depends=(freetype)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+              --disable-docs --docdir=/usr/share/doc/fontconfig-$version
+  make
+}
+package() { make DESTDIR="$PKG" install; }
+post_install() { fc-cache -f >/dev/null 2>&1 || true; }

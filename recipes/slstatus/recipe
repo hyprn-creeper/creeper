@@ -1,0 +1,26 @@
+name=slstatus
+version=1.1
+desc="slstatus — строка состояния dwm (время, батарея, память)"
+source=(https://dl.suckless.org/tools/slstatus-$version.tar.gz)
+depends=(libX11)
+
+prepare() {
+  sed -i -e 's#^X11INC = .*#X11INC = /usr/include#' -e 's#^X11LIB = .*#X11LIB = /usr/lib#' config.mk
+  cp config.def.h config.h
+  # свой набор: процессор, память, батарея, дата-время
+  python3 - << "PY"
+import re
+s = open("config.h").read()
+args = """static const struct arg args[] = {
+	/* function format          argument */
+	{ cpu_perc,     " CPU %s%% |",  NULL },
+	{ ram_perc,     " RAM %s%% |",  NULL },
+	{ battery_perc, " BAT %s%% |",  "BAT1" },
+	{ datetime,     " %s ",         "%d.%m %H:%M" },
+};"""
+s = re.sub(r"static const struct arg args\[\] = \{.*?\n\};", args, s, flags=re.S)
+open("config.h", "w").write(s)
+PY
+}
+build()   { make; }
+package() { make PREFIX=/usr DESTDIR="$PKG" install; }

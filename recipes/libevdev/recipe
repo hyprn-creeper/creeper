@@ -1,0 +1,12 @@
+name=libevdev
+version=1.13.4
+desc="события устройств ввода"
+source=(https://www.freedesktop.org/software/libevdev/libevdev-$version.tar.xz)
+depends=()
+
+build() {
+  mkdir -p build && cd build
+  meson setup --prefix=/usr --buildtype=release -D documentation=disabled -D tests=disabled ..
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

@@ -1,0 +1,11 @@
+name=libX11
+version=1.8.12
+desc="Xlib — основная библиотека X11"
+source=(https://www.x.org/pub/individual/lib/libX11-$version.tar.xz)
+depends=(xtrans libxcb xorgproto)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libX11-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

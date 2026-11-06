@@ -1,0 +1,20 @@
+name=st
+version=0.9.3
+desc="st — простой терминал (suckless)"
+source=(https://dl.suckless.org/st/st-$version.tar.gz)
+depends=(libX11 libXft fontconfig)
+
+prepare() {
+  sed -i -e 's#^X11INC = .*#X11INC = /usr/include#' -e 's#^X11LIB = .*#X11LIB = /usr/lib#' \
+         -e 's#^FREETYPEINC = .*#FREETYPEINC = /usr/include/freetype2#' config.mk
+  cp config.def.h config.h
+  sed -i 's/static char \*font = .*/static char *font = "DejaVu Sans Mono:pixelsize=16:antialias=true:autohint=true";/' config.h
+  # terminfo ставим сами в $PKG, а не в систему сборщика
+  sed -i '/tic -sx st.info/d' Makefile
+}
+build()   { make; }
+package() {
+  make PREFIX=/usr DESTDIR="$PKG" install
+  install -dm755 "$PKG/usr/share/terminfo"
+  tic -sx -o "$PKG/usr/share/terminfo" st.info
+}

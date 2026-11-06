@@ -1,0 +1,11 @@
+name=libSM
+version=1.2.6
+desc="управление сеансом X11"
+source=(https://www.x.org/pub/individual/lib/libSM-$version.tar.xz)
+depends=(libICE)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libSM-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

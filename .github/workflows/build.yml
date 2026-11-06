@@ -2,6 +2,7 @@
 # и выкладывает бинарники в релиз "bin".
 # Запуск: вкладка Actions → build → Run workflow (или: gh workflow run build.yml -f packages="git")
 name: build
+run-name: "build: ${{ inputs.packages || 'регистрация' }}"
 
 on:
   push:

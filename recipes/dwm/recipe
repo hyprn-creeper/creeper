@@ -1,0 +1,16 @@
+name=dwm
+version=6.8
+desc="dwm — плиточный оконный менеджер (suckless)"
+source=(https://dl.suckless.org/dwm/dwm-$version.tar.gz)
+depends=(libX11 libXft libXinerama)
+
+prepare() {
+  sed -i -e 's#^X11INC = .*#X11INC = /usr/include#' -e 's#^X11LIB = .*#X11LIB = /usr/lib#' \
+         -e 's#^FREETYPEINC = .*#FREETYPEINC = /usr/include/freetype2#' config.mk
+  cp config.def.h config.h
+  # клавиша-модификатор — Super (Win), как в Hyprland, а не Alt
+  sed -i 's/#define MODKEY Mod1Mask/#define MODKEY Mod4Mask/' config.h
+  sed -i 's/"monospace:size=10"/"DejaVu Sans Mono:size=11"/g' config.h
+}
+build()   { make; }
+package() { make PREFIX=/usr DESTDIR="$PKG" install; }

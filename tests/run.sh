@@ -179,6 +179,50 @@ run install hello --reinstall; check "--reinstall берёт кэш" grep -q 'к
 check "после --reinstall файл цел" [ -s "$R/usr/bin/hello" ]
 run install hello; check "без ключа — уже установлен" grep -q 'уже установлен' <<<"$OUT"
 
+echo "== 15. creeper farm (подставной GitHub API)"
+MOCK=$(cd "$(dirname "$0")" && pwd)/mock_github.py
+reset_root; mk world 1.0; mk hello 1.0; rec world 1.0 ""; rec hello 1.0 "world"
+"$C" install hello >/dev/null 2>&1
+READY=/tmp/ctest-ready; rm -rf "$READY"; mkdir -p "$READY"; cp "$R"/var/cache/creeper/bin/*.tar.zst "$READY/"
+"$C" blow hello world -y >/dev/null 2>&1; rm -rf "$R/var/cache/creeper/bin"
+mkdir -p "$REPO/st"; cp -r "$R/var/lib/creeper/recipes" "$REPO/st/"; tar -C "$REPO/st" -czf "$REPO/recipes.tar.gz" recipes
+: > "$REPO/index.txt"
+cat > "$R/etc/creeper.conf" <<EOF
+BINREPO=file://$REPO
+FARM_REPO=me/creeper
+FARM_API=http://127.0.0.1:18080
+FARM_POLL=1
+EOF
+start_mock() { pkill -f "mock_github.py 18080" 2>/dev/null; sleep 0.3; python3 "$MOCK" 18080 tok123 "$REPO" "$READY" "$@" & MOCKPID=$!; sleep 1; }
+start_mock
+run farm build hello; check "без токена — подсказка" grep -q 'farm token' <<<"$OUT"
+OUT=$(printf 'badtoken\n' | "$C" farm token 2>&1); check "неверный токен отвергнут" grep -q 'не принят' <<<"$OUT"
+OUT=$(printf 'tok123\n' | "$C" farm token 2>&1); check "токен сохранён" grep -q 'запись есть' <<<"$OUT"
+check "файл токена только для root" [ "$(stat -c %a "$R/etc/creeper/github-token")" = 600 ]
+check "токен не в аргументах curl" bash -c "! grep -q 'Bearer' <<<\"\$(declare -f)\""
+run farm build hello
+check "farm build: код 0" [ $RC -eq 0 ]
+check "рецепты отправлены (hello и world)" bash -c "grep -q 'рецепт hello-1.0 отправлен' <<<\"\$0\" && grep -q 'рецепт world-1.0 отправлен' <<<\"\$0\"" "$OUT"
+check "ферма собрала" grep -q 'ферма собрала' <<<"$OUT"
+check "поставлено с фермы" grep -q 'скачать' <<<"$OUT"
+check "hello стоит" [ -x "$R/usr/bin/hello" ]
+"$C" blow hello world -y >/dev/null 2>&1
+run farm build hello
+check "повторно рецепты не отправляются" bash -c "! grep -q 'отправлен' <<<\"\$0\"" "$OUT"
+run farm status; check "farm status показывает запуски" grep -q 'build: hello' <<<"$OUT"
+mkdir -p /tmp/ctest-newrec; printf 'name=newpkg\nversion=2.0\nsource=()\nbuild(){ :; }\n' > /tmp/ctest-newrec/recipe
+run farm send /tmp/ctest-newrec/recipe; check "farm send файла" grep -q 'newpkg-2.0 отправлен' <<<"$OUT"
+check "рецепт скопирован себе" [ -f "$R/var/lib/creeper/recipes/newpkg/recipe" ]
+start_mock fail
+mk extra 1.0; rec extra 1.0 ""
+run farm build extra
+check "сбой фермы: код ≠ 0" [ $RC -ne 0 ]
+check "сбой фермы: выдержка из лога" grep -q "шаг 'build' упал" <<<"$OUT"
+check "сбой фермы: ссылка на лог" grep -q 'весь лог' <<<"$OUT"
+run farm log; check "farm log" grep -q 'xx>' <<<"$OUT"
+run farm build 'bad;name'; check "плохое имя отвергнуто" grep -q 'плохое имя' <<<"$OUT"
+kill $MOCKPID 2>/dev/null
+
 echo
 printf 'Итого: \e[32m%d прошло\e[0m, \e[31m%d упало\e[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

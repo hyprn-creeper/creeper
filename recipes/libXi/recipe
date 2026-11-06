@@ -1,0 +1,11 @@
+name=libXi
+version=1.8.2
+desc="расширение XInput"
+source=(https://www.x.org/pub/individual/lib/libXi-$version.tar.xz)
+depends=(libXext libXfixes)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libXi-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

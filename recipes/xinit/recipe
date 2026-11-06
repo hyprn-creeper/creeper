@@ -1,0 +1,11 @@
+name=xinit
+version=1.4.4
+desc="startx — запуск X из консоли"
+source=(https://www.x.org/pub/individual/app/xinit-$version.tar.xz)
+depends=(libX11 xauth)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/xinit-$version --with-xinitdir=/etc/X11/app-defaults
+  make
+}
+package() { make DESTDIR="$PKG" install; }

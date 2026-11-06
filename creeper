@@ -7,7 +7,7 @@
 # Рецепты:     /var/lib/creeper/recipes/<пакет>/recipe
 # Установлено: /var/lib/creeper/installed/<пакет>/{version,release,files,dirs,sha256,depends,backup,reason,date,recipe}
 
-CREEPER_VERSION=0.3
+CREEPER_VERSION=0.4
 
 # ROOT пустой = настоящая система. CREEPER_ROOT — только для тестов.
 ROOT=${CREEPER_ROOT:-}
@@ -27,6 +27,13 @@ HISTORY=$LOGS/history.log
 : "${CREEPER_STRIP:=1}"
 : "${CREEPER_CHECK:=0}"
 : "${CREEPER_MINFREE_MB:=3000}"
+# ферма: репозиторий берём из BINREPO (https://github.com/OWNER/REPO/releases/download/bin)
+: "${FARM_REPO:=$(printf '%s' "$BINREPO" | sed -n 's#^https://github.com/\([^/]*/[^/]*\)/releases/.*#\1#p')}"
+: "${FARM_WORKFLOW:=build.yml}"
+: "${FARM_REF:=main}"
+: "${FARM_API:=https://api.github.com}"
+: "${FARM_POLL:=15}"
+FARM_TOKEN_FILE=${FARM_TOKEN_FILE:-$ROOT/etc/creeper/github-token}
 # потоки сборки: CREEPER_JOBS, иначе -jN из MAKEFLAGS, иначе все ядра
 if [ -z "${CREEPER_JOBS:-}" ]; then
   CREEPER_JOBS=$(printf '%s' "${MAKEFLAGS:-}" | sed -n 's/.*-j *\([0-9][0-9]*\).*/\1/p')
@@ -69,6 +76,14 @@ ${CG}creeper${CN} $CREEPER_VERSION — Ссссс... пакетный менед
   owns <файл>           чей это файл              log <п>   лог сборки
   verify [пакет...]     проверить файлы по sha256 (нужен sudo)
   history               что ставилось и удалялось
+
+ Ферма (сборка на GitHub прямо из LFS)
+  farm build <п...>     собрать на GitHub, дождаться и поставить
+      --rebuild           пересобрать, даже если бинарник уже есть
+      --no-install        только собрать
+  farm send <п|файл>    отправить свой рецепт в репозиторий
+  farm status           последние сборки       farm log   лог последней сборки
+  farm token            сохранить токен GitHub (один раз)
 
  Обслуживание
   sync                  обновить рецепты из репозитория
@@ -801,6 +816,251 @@ EOF
   info "проверь desc, depends и способ сборки; положи в recipes/ репозитория и запусти ферму"
 }
 
+
+# ---------- ферма: GitHub API ----------
+GH_HDR=; GH_OUT=; GH_CODE=; REPO_SHA=
+farm_cleanup() { [ -n "$GH_HDR" ] && rm -f "$GH_HDR"; [ -n "$GH_OUT" ] && rm -f "$GH_OUT"; return 0; }
+farm_init() {
+  [ -n "$FARM_REPO" ] || die "не знаю репозиторий фермы: задай BINREPO (или FARM_REPO=владелец/репо) в $CONF"
+  command -v curl >/dev/null || die "нужен curl"
+  command -v python3 >/dev/null || die "нужен python3"
+  local tok=${CREEPER_GITHUB_TOKEN:-}
+  [ -z "$tok" ] && [ -r "$FARM_TOKEN_FILE" ] && tok=$(tr -d ' \n\r' < "$FARM_TOKEN_FILE")
+  [ -n "$tok" ] || die "нет токена GitHub. Создай и сохрани: sudo creeper farm token"
+  GH_HDR=$(umask 077; mktemp); GH_OUT=$(umask 077; mktemp)
+  trap farm_cleanup EXIT
+  printf 'Authorization: Bearer %s\n' "$tok" > "$GH_HDR"   # токен не попадает в список процессов
+}
+# gh_api МЕТОД /путь [json] — ответ в $GH_OUT, код в $GH_CODE; 0 при 2xx. Вызывать НЕ в $(...)
+gh_api() {
+  local m=$1 path=$2 data=${3:-}
+  local -a a=(-sS -X "$m" -H @"$GH_HDR" -H "Accept: application/vnd.github+json"
+              -H "X-GitHub-Api-Version: 2022-11-28" -o "$GH_OUT" -w '%{http_code}' --connect-timeout 20)
+  [ -n "$data" ] && a+=(-H "Content-Type: application/json" --data-binary @-)
+  GH_CODE=$(printf '%s' "$data" | curl "${a[@]}" "$FARM_API$path" 2>/dev/null) \
+    || GH_CODE=$(printf '%s' "$data" | curl -4 "${a[@]}" "$FARM_API$path" 2>/dev/null) || GH_CODE=000
+  case $GH_CODE in 2??) return 0;; *) return 1;; esac
+}
+# gh_py 'код' — разобрать последний ответ API (d — данные)
+gh_py() { python3 -c "import json,sys
+try: d=json.load(open(sys.argv[1]))
+except Exception: d={}
+$1" "$GH_OUT"; }
+gh_fail() {
+  local msg; msg=$(gh_py 'print(d.get("message","") if isinstance(d,dict) else "")' 2>/dev/null)
+  case $GH_CODE in
+    000) die "$1: нет связи с api.github.com" ;;
+    401) die "$1: токен не принят (истёк или опечатка) — sudo creeper farm token" ;;
+    403|404) die "$1: доступ запрещён (HTTP $GH_CODE: ${msg:-?}). Проверь токен: репозиторий $FARM_REPO, права Actions и Contents — Read and write" ;;
+    *) die "$1: HTTP $GH_CODE ${msg:-}" ;;
+  esac
+}
+
+blob_sha() { python3 -c "import hashlib,sys
+b=open(sys.argv[1],'rb').read(); print(hashlib.sha1(b'blob %d\0' % len(b) + b).hexdigest())" "$1"; }
+
+repo_recipe_sha() { # sha рецепта в репозитории → $REPO_SHA (пусто, если нет)
+  REPO_SHA=
+  if gh_api GET "/repos/$FARM_REPO/contents/recipes/$1/recipe?ref=$FARM_REF"; then
+    REPO_SHA=$(gh_py 'print(d.get("sha",""))'); return 0
+  fi
+  [ "$GH_CODE" = 404 ] && return 0
+  gh_fail "проверка рецепта $1"
+}
+
+farm_send_file() {
+  local f=$1 n v body
+  bash -n "$f" || die "$f: ошибка в рецепте"
+  n=$(meta_f "$f" name); v=$(meta_f "$f" version)
+  [ -n "$n" ] && [ -n "$v" ] || die "$f: в рецепте нет name/version"
+  [[ $n =~ ^[a-z0-9][a-z0-9._+-]*$ ]] || die "$f: странное имя пакета '$n'"
+  repo_recipe_sha "$n"
+  body=$(python3 -c "import json,sys,base64
+f,n,v,sha,ref=sys.argv[1:6]
+d={'message':'рецепт %s-%s (из LFS)'%(n,v),'content':base64.b64encode(open(f,'rb').read()).decode(),'branch':ref}
+if sha: d['sha']=sha
+print(json.dumps(d))" "$f" "$n" "$v" "$REPO_SHA" "$FARM_REF")
+  gh_api PUT "/repos/$FARM_REPO/contents/recipes/$n/recipe" "$body" || gh_fail "отправка рецепта $n"
+  say "рецепт $n-$v отправлен в $FARM_REPO"
+  if [ "$(readlink -f "$f")" != "$(readlink -f "$(recipe_file "$n")")" ]; then
+    mkdir -p "$RECIPES/$n"; cp "$f" "$RECIPES/$n/recipe"
+  fi
+}
+
+cmd_farm_token() {
+  need_root "farm token"
+  [ -n "$FARM_REPO" ] || die "не знаю репозиторий фермы: задай BINREPO в $CONF"
+  echo "Нужен fine-grained токен GitHub (вход под владельцем репозитория):"
+  echo "  github.com → Settings → Developer settings → Personal access tokens → Fine-grained tokens"
+  echo "  Repository access: Only select repositories → $FARM_REPO"
+  echo "  Permissions: Actions — Read and write, Contents — Read and write"
+  local t; read -r -s -p "Вставь токен (не отображается): " t; echo
+  t=$(printf '%s' "$t" | tr -d ' \r\n')
+  [ -n "$t" ] || die "пусто"
+  mkdir -p "$(dirname "$FARM_TOKEN_FILE")"; chmod 700 "$(dirname "$FARM_TOKEN_FILE")"
+  ( umask 077; printf '%s\n' "$t" > "$FARM_TOKEN_FILE" ); chmod 600 "$FARM_TOKEN_FILE"
+  unset t
+  farm_init
+  gh_api GET "/repos/$FARM_REPO" || gh_fail "проверка токена"
+  local perm; perm=$(gh_py 'p=d.get("permissions",{}); print("запись есть" if p.get("push") else "только чтение (мало!)")')
+  say "токен сохранён в $FARM_TOKEN_FILE (только для root); доступ к $FARM_REPO: $perm"
+}
+
+cmd_farm_send() {
+  need_root "farm send"; [ $# -gt 0 ] || die "что отправить? пример: sudo creeper farm send htop  (или путь к файлу recipe)"
+  farm_init
+  local a f
+  for a in "$@"; do
+    if [ -f "$a" ]; then f=$a; elif [ -f "$a/recipe" ]; then f=$a/recipe; elif have_recipe "$a"; then f=$(recipe_file "$a")
+    else die "не нашёл рецепт '$a'"; fi
+    farm_send_file "$f"
+  done
+}
+
+farm_last_run_id() { # → $RUN_ID (0, если запусков не было)
+  gh_api GET "/repos/$FARM_REPO/actions/workflows/$FARM_WORKFLOW/runs?per_page=1" || gh_fail "список сборок"
+  RUN_ID=$(gh_py 'r=d.get("workflow_runs",[]); print(r[0]["id"] if r else 0)')
+}
+
+farm_show_log() { # выдержка из лога упавшей задачи запуска $1
+  local id=$1 job tmp
+  gh_api GET "/repos/$FARM_REPO/actions/runs/$id/jobs" || { warn "лог недоступен"; return 0; }
+  job=$(gh_py '
+js=d.get("jobs",[])
+bad=[j for j in js if j.get("conclusion") not in ("success","skipped",None)]
+print((bad or js or [{"id":""}])[0]["id"])')
+  [ -n "$job" ] || { warn "лог не найден"; return 0; }
+  tmp=$(mktemp)
+  curl -sSL -H @"$GH_HDR" -o "$tmp" "$FARM_API/repos/$FARM_REPO/actions/jobs/$job/logs" 2>/dev/null \
+    || curl -4 -sSL -H @"$GH_HDR" -o "$tmp" "$FARM_API/repos/$FARM_REPO/actions/jobs/$job/logs" 2>/dev/null
+  sed -E 's/^[0-9]{4}-[0-9-]+T[0-9:.]+Z ?//' "$tmp" | grep -E 'xx>|!!>|==>|##\[error\]|error:|Error ' | tail -n 30
+  rm -f "$tmp"
+}
+
+cmd_farm_build() {
+  local -a want=(); local a rebuild=false noinst=
+  for a in "$@"; do case $a in
+    --rebuild) rebuild=true;; --no-install) noinst=1;;
+    -*) die "неизвестный ключ $a";; *) want+=("$a");; esac; done
+  [ ${#want[@]} -gt 0 ] || die "что собрать? пример: sudo creeper farm build dwm"
+  need_root "farm build"; farm_init
+  for a in "${want[@]}"; do [[ $a =~ ^[a-z0-9][a-z0-9._+-]*$ ]] || die "плохое имя пакета: $a"; done
+
+  # рецепты (с зависимостями) должны быть в репозитории и совпадать с твоими
+  local -A seen=(); local -a queue=("${want[@]}") todo=(); local p d lsha
+  info "сверяю рецепты с репозиторием..."
+  while [ ${#queue[@]} -gt 0 ]; do
+    p=${queue[0]}; queue=("${queue[@]:1}")
+    [ -n "${seen[$p]:-}" ] && continue; seen[$p]=1
+    have_recipe "$p" || continue
+    for d in $(meta "$p" depends); do queue+=("$d"); done
+    lsha=$(blob_sha "$(recipe_file "$p")"); repo_recipe_sha "$p"
+    if [ -z "$REPO_SHA" ]; then info "$p: рецепта нет в репозитории"; todo+=("$p")
+    elif [ "$REPO_SHA" != "$lsha" ]; then info "$p: твой рецепт отличается от рецепта в репозитории"; todo+=("$p"); fi
+  done
+  if [ ${#todo[@]} -gt 0 ]; then
+    local ans=y
+    if [ -t 0 ]; then read -r -p "Отправить на ферму свои рецепты (${todo[*]})? [Y/n] " ans; fi
+    case $ans in n|N|нет) warn "собираю по рецептам из репозитория";;
+      *) for p in "${todo[@]}"; do farm_send_file "$(recipe_file "$p")"; done; sleep 3;; esac
+  fi
+  for a in "${want[@]}"; do
+    have_recipe "$a" && continue
+    repo_recipe_sha "$a"; [ -n "$REPO_SHA" ] || die "рецепта '$a' нет ни у тебя, ни в репозитории"
+  done
+
+  local prev id= body st concl url step t0=$SECONDS
+  farm_last_run_id; prev=${RUN_ID:-0}
+  body=$(python3 -c "import json,sys; print(json.dumps({'ref':sys.argv[1],'inputs':{'packages':sys.argv[2],'rebuild':sys.argv[3]}}))" \
+         "$FARM_REF" "${want[*]}" "$rebuild")
+  gh_api POST "/repos/$FARM_REPO/actions/workflows/$FARM_WORKFLOW/dispatches" "$body" || gh_fail "запуск фермы"
+  say "ферма запущена: ${want[*]}"
+  for _ in $(seq 1 30); do
+    sleep "$(( FARM_POLL < 4 ? FARM_POLL : 4 ))"
+    gh_api GET "/repos/$FARM_REPO/actions/workflows/$FARM_WORKFLOW/runs?per_page=5" || continue
+    id=$(gh_py "
+for r in d.get('workflow_runs',[]):
+    if r['id']>$prev and r.get('event')=='workflow_dispatch': print(r['id']); break")
+    [ -n "$id" ] && break
+  done
+  [ -n "$id" ] || die "запуск не появился на GitHub — посмотри: sudo creeper farm status"
+  url="https://github.com/$FARM_REPO/actions/runs/$id"
+  info "$url"
+  info "можно прервать Ctrl+C — сборка продолжится на GitHub (потом: sudo creeper sync && sudo creeper install ...)"
+  history_add "farm build ${want[*]} (запуск $id)"
+  st=; concl=
+  while :; do
+    if gh_api GET "/repos/$FARM_REPO/actions/runs/$id"; then
+      read -r st concl < <(gh_py 'print(d.get("status","?"), d.get("conclusion") or "-")')
+      [ "$st" = completed ] && break
+    fi
+    step="ожидание сервера"
+    gh_api GET "/repos/$FARM_REPO/actions/runs/$id/jobs" && step=$(gh_py '
+s="ожидание сервера"
+for j in d.get("jobs",[]):
+    for x in j.get("steps",[]):
+        if x.get("status")=="in_progress": s=x["name"]
+print(s)')
+    if [ -t 1 ]; then printf '\r    [%3d:%02d] %s\e[K' $(( (SECONDS-t0)/60 )) $(( (SECONDS-t0)%60 )) "$step"
+    else info "[$(( (SECONDS-t0)/60 )) мин] $step"; fi
+    sleep "$FARM_POLL"
+  done
+  [ -t 1 ] && printf '\r\e[K'
+  if [ "$concl" = success ]; then
+    say "ферма собрала за $(( (SECONDS-t0)/60 )) мин: ${want[*]}"
+  else
+    warn "сборка на ферме: $concl"
+    farm_show_log "$id"
+    info "весь лог: $url"
+    history_add "farm FAIL ${want[*]} (запуск $id)"
+  fi
+  # всё, что успело собраться, уже выложено
+  ( cmd_sync ) >/dev/null 2>&1 || warn "sync не удался — повтори: sudo creeper sync"
+  if [ -z "$noinst" ]; then
+    INDEX=; load_index
+    local -a ok=()
+    for a in "${want[@]}"; do
+      have_recipe "$a" || continue
+      if [ -n "$(bin_entry "$a" "$(meta "$a" version)" "$(pkgrel "$a")")" ]; then ok+=("$a"); else warn "$a: бинарника на ферме нет"; fi
+    done
+    [ ${#ok[@]} -gt 0 ] && cmd_install "${ok[@]}"
+  fi
+  [ "$concl" = success ]
+}
+
+cmd_farm_status() {
+  farm_init
+  gh_api GET "/repos/$FARM_REPO/actions/workflows/$FARM_WORKFLOW/runs?per_page=8" || gh_fail "статус фермы"
+  gh_py '
+for r in d.get("workflow_runs",[]):
+    st=r.get("conclusion") or r.get("status")
+    mark={"success":"ok ","failure":"ОШ ","cancelled":"отм","skipped":" - "}.get(st,"...")
+    t=r["created_at"].replace("T"," ")[:16]
+    print("%s %s UTC  %-11s %s" % (mark, t, st, r.get("display_title","")))'
+  info "все сборки: https://github.com/$FARM_REPO/actions"
+}
+
+cmd_farm_log() {
+  farm_init
+  local id=${1:-}
+  if [ -z "$id" ]; then farm_last_run_id; id=$RUN_ID; fi
+  [ "${id:-0}" != 0 ] || die "сборок ещё не было"
+  farm_show_log "$id"
+  info "весь лог: https://github.com/$FARM_REPO/actions/runs/$id"
+}
+
+cmd_farm() {
+  local sub=${1:-}; [ $# -gt 0 ] && shift
+  case $sub in
+    build|b)   cmd_farm_build "$@" ;;
+    send)      cmd_farm_send "$@" ;;
+    status|st) cmd_farm_status ;;
+    log)       cmd_farm_log "$@" ;;
+    token)     cmd_farm_token ;;
+    *) die "creeper farm build|send|status|log|token (подробнее: creeper help)" ;;
+  esac
+}
+
 cmd_list() {
   local d p n=0 why
   for d in "$DB"/*/; do
@@ -875,6 +1135,7 @@ case $cmd in
   log)              cmd_log "$@" ;;
   history)          cmd_history "$@" ;;
   sync)             cmd_sync ;;
+  farm)             cmd_farm "$@" ;;
   self-update)      cmd_self_update ;;
   clean)            cmd_clean "$@" ;;
   new)              cmd_new "$@" ;;

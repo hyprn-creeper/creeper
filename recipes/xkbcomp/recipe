@@ -1,0 +1,11 @@
+name=xkbcomp
+version=1.4.7
+desc="компилятор раскладок XKB (нужен серверу)"
+source=(https://www.x.org/pub/individual/app/xkbcomp-$version.tar.xz)
+depends=(libxkbfile)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/xkbcomp-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

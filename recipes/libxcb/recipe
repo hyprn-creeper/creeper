@@ -1,0 +1,11 @@
+name=libxcb
+version=1.17.0
+desc="XCB — низкоуровневая библиотека X11"
+source=(https://xorg.freedesktop.org/archive/individual/lib/libxcb-$version.tar.xz)
+depends=(libXau libXdmcp xcb-proto)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libxcb-$version --without-doxygen --docdir='${datadir}'/doc/libxcb-$version
+  make
+}
+package() { make DESTDIR="$PKG" install; }

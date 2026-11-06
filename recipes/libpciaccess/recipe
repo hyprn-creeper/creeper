@@ -1,0 +1,12 @@
+name=libpciaccess
+version=0.18.1
+desc="доступ к устройствам PCI"
+source=(https://www.x.org/pub/individual/lib/libpciaccess-$version.tar.xz)
+depends=(util-macros)
+
+build() {
+  mkdir -p build && cd build
+  meson setup --prefix=/usr --buildtype=release  ..
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

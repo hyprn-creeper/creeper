@@ -1,0 +1,11 @@
+name=setxkbmap
+version=1.3.4
+desc="переключение раскладок (us/ru)"
+source=(https://www.x.org/pub/individual/app/setxkbmap-$version.tar.xz)
+depends=(libxkbfile)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/setxkbmap-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

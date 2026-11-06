@@ -1,0 +1,11 @@
+name=libXrandr
+version=1.5.4
+desc="расширение RandR (экраны)"
+source=(https://www.x.org/pub/individual/lib/libXrandr-$version.tar.xz)
+depends=(libXext libXrender)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libXrandr-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

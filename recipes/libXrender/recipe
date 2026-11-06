@@ -1,0 +1,11 @@
+name=libXrender
+version=0.9.12
+desc="расширение RENDER"
+source=(https://www.x.org/pub/individual/lib/libXrender-$version.tar.xz)
+depends=(libX11)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libXrender-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

@@ -1,0 +1,12 @@
+name=libdrm
+version=2.4.125
+desc="доступ к видеоядру (DRM)"
+source=(https://dri.freedesktop.org/libdrm/libdrm-$version.tar.xz)
+depends=(libpciaccess)
+
+build() {
+  mkdir -p build && cd build
+  meson setup --prefix=/usr --buildtype=release -D udev=true -D valgrind=disabled ..
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

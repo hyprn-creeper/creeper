@@ -1,0 +1,15 @@
+name=freetype
+version=2.13.3
+desc="отрисовка шрифтов FreeType"
+source=(https://downloads.sourceforge.net/freetype/freetype-$version.tar.xz)
+depends=(libpng which)
+
+prepare() {
+  sed -ri "s:.*(AUX_MODULES.*valid):\1:" modules.cfg
+  sed -r "s:.*(#.*SUBPIXEL_RENDERING) .*:\1:" -i include/freetype/config/ftoption.h
+}
+build() {
+  ./configure --prefix=/usr --enable-freetype-config --disable-static
+  make
+}
+package() { make DESTDIR="$PKG" install; }

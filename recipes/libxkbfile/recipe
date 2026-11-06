@@ -1,0 +1,11 @@
+name=libxkbfile
+version=1.1.3
+desc="файлы раскладок XKB"
+source=(https://www.x.org/pub/individual/lib/libxkbfile-$version.tar.xz)
+depends=(libX11)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libxkbfile-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

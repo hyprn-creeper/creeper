@@ -1,0 +1,12 @@
+name=xorgproto
+version=2024.1
+desc="заголовки протоколов X11"
+source=(https://xorg.freedesktop.org/archive/individual/proto/xorgproto-$version.tar.xz)
+depends=(util-macros)
+
+build() {
+  mkdir -p build && cd build
+  meson setup --prefix=/usr --buildtype=release -D legacy=true ..
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

@@ -1,0 +1,11 @@
+name=xinput
+version=1.6.4
+desc="настройка мыши и тачпада"
+source=(https://www.x.org/pub/individual/app/xinput-$version.tar.xz)
+depends=(libXi libXrandr libXinerama)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/xinput-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

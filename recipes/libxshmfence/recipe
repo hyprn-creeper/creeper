@@ -1,0 +1,11 @@
+name=libxshmfence
+version=1.3.3
+desc="общие барьеры памяти X11"
+source=(https://www.x.org/pub/individual/lib/libxshmfence-$version.tar.xz)
+depends=(xorgproto)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/libxshmfence-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

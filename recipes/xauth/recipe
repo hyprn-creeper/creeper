@@ -1,0 +1,11 @@
+name=xauth
+version=1.1.4
+desc="ключи доступа к X-серверу"
+source=(https://www.x.org/pub/individual/app/xauth-$version.tar.xz)
+depends=(libXau libXext libXmu)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --docdir=/usr/share/doc/xauth-$version 
+  make
+}
+package() { make DESTDIR="$PKG" install; }

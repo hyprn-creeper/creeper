@@ -1,0 +1,14 @@
+name=dmenu
+version=5.4
+desc="dmenu — меню запуска программ (Super+P в dwm)"
+source=(https://dl.suckless.org/tools/dmenu-$version.tar.gz)
+depends=(libX11 libXft libXinerama)
+
+prepare() {
+  sed -i -e 's#^X11INC = .*#X11INC = /usr/include#' -e 's#^X11LIB = .*#X11LIB = /usr/lib#' \
+         -e 's#^FREETYPEINC = .*#FREETYPEINC = /usr/include/freetype2#' config.mk
+  cp config.def.h config.h
+  sed -i 's/"monospace:size=10"/"DejaVu Sans Mono:size=11"/' config.h
+}
+build()   { make; }
+package() { make PREFIX=/usr DESTDIR="$PKG" install; }

@@ -1,0 +1,14 @@
+name=xrandr
+version=1.5.3
+desc="разрешение и мониторы"
+source=(https://www.x.org/pub/individual/app/xrandr-$version.tar.xz)
+depends=(libXrandr)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static
+  make
+}
+package() {
+  make DESTDIR="$PKG" install
+  rm -f "$PKG/usr/bin/xkeystone"     # как в BLFS: без cairo-5c/nickle не работает
+}

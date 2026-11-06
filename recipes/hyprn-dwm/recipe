@@ -1,0 +1,42 @@
+name=hyprn-dwm
+version=1.0
+desc="рабочий стол Hyprn: Xorg + dwm + st + dmenu, команда startdwm"
+source=()
+depends=(xorg-server xf86-input-libinput xkbcomp xinit xauth setxkbmap xsetroot xrandr xset dejavu-fonts dwm st dmenu slstatus)
+
+build() { :; }
+package() {
+  install -dm755 "$PKG/usr/bin" "$PKG/usr/share/hyprn"
+  cat > "$PKG/usr/share/hyprn/dwm-session" << "EOF"
+#!/bin/sh
+# сеанс dwm (свой можно положить в ~/.xinitrc — тогда запускай просто startx)
+setxkbmap -layout us,ru -option grp:alt_shift_toggle 2>/dev/null   # Alt+Shift — язык
+xsetroot -solid '#1b1d2b' 2>/dev/null
+xset r rate 300 40 2>/dev/null
+[ -x /usr/bin/slstatus ] && slstatus &
+[ -r "$HOME/.xprofile" ] && . "$HOME/.xprofile"
+exec dwm
+EOF
+  chmod 755 "$PKG/usr/share/hyprn/dwm-session"
+  cat > "$PKG/usr/bin/startdwm" << "EOF"
+#!/bin/sh
+# startdwm — запустить dwm из консоли (tty)
+log="$HOME/.local/share/xorg-session.log"
+mkdir -p "$HOME/.local/share"
+tty=$(tty 2>/dev/null)
+case $tty in /dev/tty[0-9]*) vt="vt${tty#/dev/tty}";; *) vt=;; esac
+startx /usr/share/hyprn/dwm-session -- $vt -keeptty > "$log" 2>&1
+rc=$?
+if [ $rc -ne 0 ]; then
+  echo "X завершился с ошибкой ($rc). Логи: $log и /var/log/Xorg.0.log"
+  tail -n 15 /var/log/Xorg.0.log 2>/dev/null | grep -E '\(EE\)|Fatal' || tail -n 10 "$log"
+fi
+exit $rc
+EOF
+  chmod 755 "$PKG/usr/bin/startdwm"
+}
+post_install() {
+  echo "Готово. Войди обычным пользователем на tty и набери:  startdwm"
+  echo "  Super+Shift+Enter — терминал st, Super+P — меню, Super+Shift+C — закрыть окно,"
+  echo "  Super+J/K — переключать окна, Super+1..9 — рабочие столы, Super+Shift+Q — выход, Alt+Shift — язык"
+}
