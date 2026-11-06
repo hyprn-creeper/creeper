@@ -1,0 +1,13 @@
+name=libsndfile
+version=1.2.2
+desc="чтение и запись звуковых файлов (нужна PulseAudio)"
+source=(https://github.com/libsndfile/libsndfile/releases/download/$version/libsndfile-$version.tar.xz)
+depends=()
+
+prepare() { sed '/typedef enum/,/bool ;/d' -i src/ALAC/alac_{en,de}coder.c; }
+build() {
+  ./configure --prefix=/usr --disable-static --disable-external-libs --disable-mpeg \
+              --docdir=/usr/share/doc/libsndfile-$version
+  make
+}
+package() { make DESTDIR="$PKG" install; }

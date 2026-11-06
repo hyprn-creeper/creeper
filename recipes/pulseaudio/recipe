@@ -1,0 +1,25 @@
+name=pulseaudio
+version=17.0
+desc="звуковой сервер PulseAudio (голос в Discord)"
+source=(https://www.freedesktop.org/software/pulseaudio/releases/pulseaudio-$version.tar.xz)
+depends=(libsndfile alsa-lib dbus glib libX11 libXtst libICE libSM)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release \
+        -D database=gdbm -D doxygen=false -D man=false -D tests=false \
+        -D bluez5=disabled -D systemd=disabled -D elogind=disabled -D consolekit=disabled \
+        -D gtk=disabled -D jack=disabled -D lirc=disabled -D avahi=disabled -D tcpwrap=disabled \
+        -D orc=disabled -D soxr=disabled -D speex=disabled -D fftw=disabled -D webrtc-aec=disabled \
+        -D gsettings=disabled -D valgrind=disabled -D asyncns=disabled -D gstreamer=disabled \
+        -D x11=enabled -D alsa=enabled -D dbus=enabled -D udev=enabled
+  ninja -j"$JOBS"
+}
+package() {
+  cd build && DESTDIR="$PKG" ninja install
+  rm -f "$PKG/usr/share/dbus-1/system.d/pulseaudio-system.conf"
+}
+post_install() {
+  echo "PulseAudio запускается сам, когда программе нужен звук."
+  echo "Пользователю нужен доступ к звуковой карте:  sudo usermod -aG audio hyprn  (и перелогиниться)"
+}

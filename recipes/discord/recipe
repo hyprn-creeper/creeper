@@ -3,7 +3,7 @@ version=1.0.168
 desc="Discord (загрузчик; само приложение скачивается при первом запуске)"
 url=https://discord.com/
 source=(discord-$version.tar.gz::https://stable.dl2.discordapp.net/distro/app/stable/linux/x64/$version/Discord.tar.gz)
-depends=(gtk3 nss alsa-lib cups-libs mesa libxkbcommon wayland dbus at-spi2-core libXScrnSaver libXtst libXcomposite libXdamage libXrandr adwaita-icon-theme dejavu-fonts)
+depends=(gtk3 nss alsa-lib pulseaudio cups-libs mesa libxkbcommon wayland dbus at-spi2-core libXScrnSaver libXtst libXcomposite libXdamage libXrandr adwaita-icon-theme dejavu-fonts)
 # закрытая программа: ставится только у себя, на ферму не выкладывается
 norepo=1
 
@@ -38,5 +38,5 @@ EOS
 }
 post_install() {
   echo "Запуск: discord (или Super+P → discord). Первый раз скачает приложение в ~/.config/discord."
-  echo "Голос пока не работает (нужен PulseAudio) — текст, картинки и звонки без звука работают."
+  echo "Для голоса пользователь должен быть в группе audio:  sudo usermod -aG audio hyprn"
 }
