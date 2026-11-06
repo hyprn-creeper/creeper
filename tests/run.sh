@@ -223,6 +223,13 @@ run farm log; check "farm log" grep -q 'xx>' <<<"$OUT"
 run farm build 'bad;name'; check "плохое имя отвергнуто" grep -q 'плохое имя' <<<"$OUT"
 kill $MOCKPID 2>/dev/null
 
+echo "== 16. norepo: закрытые пакеты не попадают в index"
+reset_root; mk secret 1.0; rec secret 1.0 ""; echo 'norepo=1' >> "$R/var/lib/creeper/recipes/secret/recipe"
+mk hello 1.0; rec hello 1.0 ""
+"$C" install secret hello >/dev/null 2>&1
+check "norepo-пакет установлен" [ -x "$R/usr/bin/secret" ]
+run index; check "index без norepo-пакета" bash -c "grep -q '^hello ' <<<\"\$0\" && ! grep -q '^secret ' <<<\"\$0\"" "$OUT"
+
 echo
 printf 'Итого: \e[32m%d прошло\e[0m, \e[31m%d упало\e[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

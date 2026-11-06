@@ -1,0 +1,13 @@
+name=adwaita-icon-theme
+version=48.1
+desc="значки и курсоры Adwaita"
+source=(https://download.gnome.org/sources/adwaita-icon-theme/48/adwaita-icon-theme-$version.tar.xz)
+depends=(gtk3)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }
+post_install() { gtk-update-icon-cache -qtf /usr/share/icons/Adwaita 2>/dev/null || true; }

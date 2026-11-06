@@ -1,0 +1,11 @@
+name=libXxf86vm
+version=1.1.6
+desc="расширение XFree86-VidMode (нужно Mesa)"
+source=(https://www.x.org/pub/individual/lib/libXxf86vm-$version.tar.xz)
+depends=(libXext)
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static
+  make
+}
+package() { make DESTDIR="$PKG" install; }

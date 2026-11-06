@@ -1,0 +1,12 @@
+name=wayland
+version=1.24.0
+desc="библиотека Wayland (libwayland-client нужна Discord)"
+source=(https://gitlab.freedesktop.org/wayland/wayland/-/releases/$version/downloads/wayland-$version.tar.xz)
+depends=(libxml2)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release -D documentation=false -D tests=false
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

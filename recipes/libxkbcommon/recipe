@@ -1,0 +1,12 @@
+name=libxkbcommon
+version=1.11.0
+desc="раскладки клавиатуры для программ"
+source=(https://xkbcommon.org/download/libxkbcommon-$version.tar.xz)
+depends=(xkeyboard-config libxcb libxml2)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release -D enable-docs=false -D enable-wayland=false
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

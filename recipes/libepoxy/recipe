@@ -1,0 +1,12 @@
+name=libepoxy
+version=1.5.10
+desc="загрузчик функций OpenGL (нужен GTK)"
+source=(https://download.gnome.org/sources/libepoxy/1.5/libepoxy-$version.tar.xz)
+depends=(mesa)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release -D docs=false -D tests=false
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

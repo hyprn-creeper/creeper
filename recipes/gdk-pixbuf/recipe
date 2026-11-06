@@ -1,0 +1,15 @@
+name=gdk-pixbuf
+version=2.42.12
+desc="загрузка картинок для GTK"
+source=(https://download.gnome.org/sources/gdk-pixbuf/2.42/gdk-pixbuf-$version.tar.xz)
+depends=(glib libjpeg-turbo libpng shared-mime-info)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release --wrap-mode=nofallback \
+        -D others=enabled -D tiff=disabled -D man=false -D gtk_doc=false \
+        -D introspection=disabled -D tests=false -D installed_tests=false
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }
+post_install() { gdk-pixbuf-query-loaders --update-cache; }

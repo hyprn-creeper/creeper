@@ -1,0 +1,13 @@
+name=harfbuzz
+version=11.4.1
+desc="сборка текста из глифов (нужна pango)"
+source=(https://github.com/harfbuzz/harfbuzz/releases/download/$version/harfbuzz-$version.tar.xz)
+depends=(glib freetype)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release -D graphite2=disabled -D icu=disabled \
+        -D cairo=disabled -D tests=disabled -D docs=disabled -D introspection=disabled
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

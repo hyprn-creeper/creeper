@@ -1,0 +1,21 @@
+name=gtk3
+version=3.24.50
+desc="GTK 3 — окна и кнопки программ (только X11)"
+source=(https://download.gnome.org/sources/gtk/3.24/gtk-$version.tar.xz)
+depends=(at-spi2-core gdk-pixbuf libepoxy pango cairo libxkbcommon libXi libXrandr libXcursor libXinerama libXdamage libXcomposite libXext libXfixes hicolor-icon-theme gsettings-desktop-schemas)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release \
+        -D x11_backend=true -D wayland_backend=false -D broadway_backend=false \
+        -D print_backends=file -D colord=no -D cloudproviders=false -D tracker3=false \
+        -D introspection=false -D man=false -D gtk_doc=false \
+        -D demos=false -D examples=false -D tests=false -D installed_tests=false
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }
+post_install() {
+  gtk-query-immodules-3.0 --update-cache
+  glib-compile-schemas /usr/share/glib-2.0/schemas
+  gtk-update-icon-cache -qtf /usr/share/icons/hicolor 2>/dev/null || true
+}

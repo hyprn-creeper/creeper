@@ -1,0 +1,12 @@
+name=cairo
+version=1.18.4
+desc="2D-графика Cairo"
+source=(https://www.cairographics.org/releases/cairo-$version.tar.xz)
+depends=(libpng pixman fontconfig freetype glib libX11 libXext libXrender libxcb)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release -D tests=disabled
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

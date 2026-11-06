@@ -1,0 +1,12 @@
+name=hicolor-icon-theme
+version=0.18
+desc="базовая тема значков"
+source=(https://icon-theme.freedesktop.org/releases/hicolor-icon-theme-$version.tar.xz)
+depends=()
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

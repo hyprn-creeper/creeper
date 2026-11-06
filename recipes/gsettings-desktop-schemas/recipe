@@ -1,0 +1,14 @@
+name=gsettings-desktop-schemas
+version=48.0
+desc="общие настройки рабочего стола (GSettings)"
+source=(https://download.gnome.org/sources/gsettings-desktop-schemas/48/gsettings-desktop-schemas-$version.tar.xz)
+depends=(glib)
+
+prepare() { sed -i -r 's:"(/system):"/org/gnome\1:g' schemas/*.in; }
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release -D introspection=false
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }
+post_install() { glib-compile-schemas /usr/share/glib-2.0/schemas; }

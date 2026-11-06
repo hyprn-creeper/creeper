@@ -1,0 +1,42 @@
+name=discord
+version=1.0.168
+desc="Discord (загрузчик; само приложение скачивается при первом запуске)"
+url=https://discord.com/
+source=(discord-$version.tar.gz::https://stable.dl2.discordapp.net/distro/app/stable/linux/x64/$version/Discord.tar.gz)
+depends=(gtk3 nss alsa-lib cups-libs mesa libxkbcommon wayland dbus at-spi2-core libXScrnSaver libXtst libXcomposite libXdamage libXrandr adwaita-icon-theme dejavu-fonts)
+# закрытая программа: ставится только у себя, на ферму не выкладывается
+norepo=1
+
+build() { :; }
+package() {
+  install -Dm755 updater_bootstrap "$PKG/usr/share/discord/updater_bootstrap"
+  install -Dm644 discord.png "$PKG/usr/share/pixmaps/discord.png"
+  install -Dm644 discord.desktop "$PKG/usr/share/applications/discord.desktop"
+  install -dm755 "$PKG/usr/bin"
+  cat > "$PKG/usr/bin/discord" << "EOS"
+#!/bin/sh
+# Discord для Hyprn LFS: первый запуск скачивает приложение в ~/.config/discord
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+dir=$config_home/discord
+log=$HOME/.local/share/discord.log
+mkdir -p "$HOME/.local/share"
+if [ -z "$XDG_RUNTIME_DIR" ]; then
+  XDG_RUNTIME_DIR=/tmp/runtime-$(id -u); mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+  export XDG_RUNTIME_DIR
+fi
+[ -t 1 ] || exec >>"$log" 2>&1
+if [ ! -x "$dir/Discord" ]; then
+  mkdir -p "$dir"
+  echo "Discord: первый запуск — скачиваю приложение (около 100 МБ)..."
+  app_dir=$(/usr/share/discord/updater_bootstrap --no-zenity "$dir" stable https://updates.discord.com/) \
+    || { echo "Discord: загрузка не удалась (лог: $log)"; exit 2; }
+  exec "$dir/$app_dir/Discord" "$@"
+fi
+exec "$dir/Discord" "$@"
+EOS
+  chmod 755 "$PKG/usr/bin/discord"
+}
+post_install() {
+  echo "Запуск: discord (или Super+P → discord). Первый раз скачает приложение в ~/.config/discord."
+  echo "Голос пока не работает (нужен PulseAudio) — текст, картинки и звонки без звука работают."
+}

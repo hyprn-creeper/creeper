@@ -1,0 +1,8 @@
+name=python-mako
+version=1.3.10
+desc="Python: шаблоны Mako (нужны для сборки Mesa)"
+source=(https://files.pythonhosted.org/packages/source/M/Mako/mako-$version.tar.gz)
+depends=()
+
+build() { pip3 wheel -w dist --no-build-isolation --no-deps --no-cache-dir "$PWD"; }
+package() { pip3 install --root="$PKG" --no-index --find-links dist --no-user --no-deps --no-compile Mako; }

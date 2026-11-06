@@ -1,0 +1,15 @@
+name=libxml2
+version=2.14.5
+desc="разбор XML"
+source=(https://download.gnome.org/sources/libxml2/2.14/libxml2-$version.tar.xz)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --disable-static --with-history \
+              --without-python --docdir=/usr/share/doc/libxml2-$version
+  make
+}
+package() {
+  make DESTDIR="$PKG" install
+  sed '/libs=/s/xml2.*/xml2"/' -i "$PKG/usr/bin/xml2-config"
+}

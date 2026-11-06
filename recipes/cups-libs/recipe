@@ -1,0 +1,17 @@
+name=cups-libs
+version=2.4.12
+desc="только библиотека libcups (печать; нужна Electron), без сервера печати"
+source=(https://github.com/OpenPrinting/cups/releases/download/v$version/cups-$version-source.tar.gz)
+depends=()
+
+build() {
+  ./configure --prefix=/usr --libdir=/usr/lib --with-tls=openssl \
+              --disable-systemd --disable-avahi --disable-dbus --disable-gssapi \
+              --without-rcdir --with-rundir=/run/cups --disable-static
+  make -C cups libs
+}
+package() {
+  make -C cups BUILDROOT="$PKG" install-libs install-headers
+  install -Dm755 cups-config "$PKG/usr/bin/cups-config"
+  if [ -f cups.pc ]; then install -Dm644 cups.pc "$PKG/usr/lib/pkgconfig/cups.pc"; fi
+}

@@ -1,0 +1,13 @@
+name=shared-mime-info
+version=2.4
+desc="база типов файлов"
+source=(https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/$version/shared-mime-info-$version.tar.gz)
+depends=(glib libxml2)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release -D update-mimedb=false -D build-tests=false
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }
+post_install() { update-mime-database /usr/share/mime; }

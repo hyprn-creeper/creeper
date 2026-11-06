@@ -1,0 +1,13 @@
+name=pango
+version=1.56.4
+desc="вывод текста (GTK)"
+source=(https://download.gnome.org/sources/pango/1.56/pango-$version.tar.xz)
+depends=(fontconfig freetype harfbuzz fribidi glib cairo libXft)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release --wrap-mode=nofallback \
+        -D introspection=disabled -D documentation=false -D build-testsuite=false -D build-examples=false
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

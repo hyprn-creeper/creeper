@@ -1,0 +1,14 @@
+name=nspr
+version=4.37
+desc="Netscape Portable Runtime (нужна NSS)"
+source=(https://archive.mozilla.org/pub/nspr/releases/v$version/src/nspr-$version.tar.gz)
+depends=()
+
+build() {
+  cd nspr
+  sed -i '/^RELEASE/s|^|#|' pr/src/misc/Makefile.in
+  sed -i 's|$(LIBRARY) ||' config/rules.mk
+  ./configure --prefix=/usr --with-mozilla --with-pthreads --enable-64bit
+  make
+}
+package() { cd nspr && make DESTDIR="$PKG" install; }

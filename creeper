@@ -7,7 +7,7 @@
 # Рецепты:     /var/lib/creeper/recipes/<пакет>/recipe
 # Установлено: /var/lib/creeper/installed/<пакет>/{version,release,files,dirs,sha256,depends,backup,reason,date,recipe}
 
-CREEPER_VERSION=0.4
+CREEPER_VERSION=0.5
 
 # ROOT пустой = настоящая система. CREEPER_ROOT — только для тестов.
 ROOT=${CREEPER_ROOT:-}
@@ -314,6 +314,8 @@ build_pkg() {
   mkdir -p "$PKG/.CREEPER"
   cp "$(recipe_file "$p")" "$PKG/.CREEPER/recipe"
   printf 'name=%s\nversion=%s\nrelease=%s\nbuilt=%s\n' "$p" "$ver" "$rel" "$(date '+%F %R')" > "$PKG/.CREEPER/info"
+  # norepo=1 — пакет с чужой закрытой программой: ставится только локально, на ферму не выкладывается
+  [ "$(meta "$p" norepo)" = 1 ] && echo "norepo=1" >> "$PKG/.CREEPER/info"
   if [ "$CREEPER_KEEPBIN" = 1 ]; then
     mkdir -p "$BINCACHE"
     local bf; bf=$BINCACHE/$(binfile "$p" "$ver" "$rel")
@@ -646,6 +648,7 @@ cmd_index() {
     inf=$(tar --zstd -xOf "$f" --wildcards '*.CREEPER/info' 2>/dev/null) || continue
     n=$(echo "$inf" | sed -n 's/^name=//p'); v=$(echo "$inf" | sed -n 's/^version=//p'); r=$(echo "$inf" | sed -n 's/^release=//p')
     [ -n "$n" ] && [ -n "$v" ] || continue
+    echo "$inf" | grep -qx 'norepo=1' && continue
     printf '%s %s %s %s %s\n' "$n" "$v" "${r:-1}" "$(sha256sum "$f" | cut -d' ' -f1)" "$(basename "$f")"
   done | sort
 }
