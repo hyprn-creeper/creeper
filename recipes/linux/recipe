@@ -1,0 +1,41 @@
+name=linux
+version=7.2.15
+desc="ядро Linux для Hyprn LFS (конфиг Arch, NVMe и ext4 встроены — без initramfs)"
+url=https://www.kernel.org/
+source=(https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-$version.tar.xz
+        arch-config-$version::https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/$version.arch1-1/config.x86_64)
+depends=()
+
+KVER=$version-lfs
+
+prepare() {
+  cp "$SOURCES/arch-config-$version" .config
+  sc() { scripts/config --file .config "$@"; }
+  sc --set-str LOCALVERSION "-lfs" -d LOCALVERSION_AUTO
+  # без initramfs: диск и файловая система должны быть в самом ядре
+  sc -e BLK_DEV_NVME -e NVME_CORE -e EXT4_FS
+  # подпись модулей, отладочная информация, BTF и встроенные заголовки не нужны
+  sc -d MODULE_SIG -d MODULE_SIG_ALL -d MODULE_SIG_FORCE \
+     -d DEBUG_INFO -d DEBUG_INFO_BTF -d DEBUG_INFO_DWARF5 -d DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT -e DEBUG_INFO_NONE \
+     -d IKHEADERS -d WERROR -d UEVENT_HELPER
+  make olddefconfig
+  # проверка: что важно — на месте
+  for o in BLK_DEV_NVME EXT4_FS; do grep -q "^CONFIG_$o=y" .config || { echo "CONFIG_$o не встроен"; exit 1; }; done
+  grep -q '^CONFIG_RTW88_8821CE=m' .config || { echo "нет драйвера Wi-Fi RTL8821CE"; exit 1; }
+  grep -q '^CONFIG_DRM_I915=[ym]' .config || { echo "нет видеодрайвера i915"; exit 1; }
+}
+build() {
+  make -j"$JOBS" bzImage modules
+}
+package() {
+  install -Dm644 arch/x86/boot/bzImage "$PKG/boot/vmlinuz-$KVER"
+  install -Dm644 System.map "$PKG/boot/System.map-$KVER"
+  install -Dm644 .config "$PKG/boot/config-$KVER"
+  make INSTALL_MOD_PATH="$PKG/usr" INSTALL_MOD_STRIP=1 modules_install
+  rm -f "$PKG/usr/lib/modules/$KVER/build" "$PKG/usr/lib/modules/$KVER/source"
+}
+post_install() {
+  depmod -a "$KVER"
+  echo "Ядро установлено: /boot/vmlinuz-$KVER (старое 6.16.1 осталось на месте)."
+  echo "Добавь пункт в GRUB — в Arch: sudo bash tools/lfs-grub-add.sh $KVER  (из папки репозитория creeper)"
+}
