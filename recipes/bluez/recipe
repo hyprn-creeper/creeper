@@ -13,8 +13,8 @@ build() {
 }
 package() {
   make DESTDIR="$PKG" install
-  ln -sf ../libexec/bluetooth/bluetoothd "$PKG/usr/sbin/bluetoothd"
-  install -dm755 "$PKG/etc/bluetooth" "$PKG/etc/rc.d/init.d" "$PKG/var/lib/bluetooth"
+  install -dm755 "$PKG/usr/sbin"; ln -sf ../libexec/bluetooth/bluetoothd "$PKG/usr/sbin/bluetoothd"
+  install -dm755 "$PKG/etc/bluetooth" "$PKG/etc/rc.d/init.d"
   install -m644 src/main.conf "$PKG/etc/bluetooth/main.conf"
   # включать адаптер сам при загрузке
   sed -i 's/^#\?AutoEnable *=.*/AutoEnable=true/' "$PKG/etc/bluetooth/main.conf"
