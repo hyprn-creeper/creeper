@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       what:
-        description: "discord | kernel"
+        description: "discord | kernel | blfs:раздел/страница,раздел/страница"
         required: true
         type: string
 
@@ -61,3 +61,30 @@ jobs:
           for f in config config.x86_64; do curl -fsSL -o /tmp/config "https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/main/$f" && { echo "конфиг Arch: $f"; break; }; done
           curl -fsSL "https://gitlab.archlinux.org/api/v4/projects/archlinux%2Fpackaging%2Fpackages%2Flinux/repository/tree?ref=main" | python3 -c "import json,sys; print([x['name'] for x in json.load(sys.stdin)])"
           head -n 4 /tmp/config; grep -E 'CONFIG_(MODULE_COMPRESS|MODULE_SIG|DEBUG_INFO|RTW88_8821CE|BLK_DEV_NVME|EXT4_FS|DRM_I915)[ =]' /tmp/config
+
+      - name: BLFS
+        if: startsWith(env.WHAT, 'blfs:')
+        run: |
+          cat > /tmp/blfs.py << 'PY'
+          import html, re, sys, urllib.request
+          for page in sys.argv[1].split(","):
+              url = "https://www.linuxfromscratch.org/blfs/view/12.4/%s.html" % page.strip()
+              try:
+                  t = urllib.request.urlopen(url, timeout=30).read().decode("utf-8", "replace")
+              except Exception as e:
+                  print("#### %s: %s" % (page, e)); continue
+              print("#### " + page)
+              for h in sorted(set(re.findall(r'href="([^"]+\.(?:tar\.(?:xz|gz|bz2|zst)|tgz|patch))"', t))):
+                  print("URL", h)
+              m = re.search(r"(Required|Recommended)", t)
+              for kind in ("Required", "Recommended"):
+                  mm = re.search(r'<h4[^>]*>\s*%s\s*</h4>(.*?)</p>' % kind, t, re.S)
+                  if mm:
+                      print("%s: %s" % (kind, re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", mm.group(1)))).strip()))
+              for cls, cmd in re.findall(r'<pre class="(userinput|root)">(.*?)</pre>', t, re.S):
+                  c = html.unescape(re.sub(r"<[^>]+>", "", cmd)).strip()
+                  print(("[root] " if cls == "root" else "") + c)
+                  print("--")
+          PY
+          python3 /tmp/blfs.py "${WHAT#blfs:}"
+
