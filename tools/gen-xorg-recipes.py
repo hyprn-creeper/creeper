@@ -242,7 +242,7 @@ SL_MK = '''  sed -i -e 's#^X11INC = .*#X11INC = /usr/include#' -e 's#^X11LIB = .
 write("dwm", f'''
 name=dwm
 version=6.8
-release=2
+release=3
 desc="dwm — плиточный оконный менеджер (suckless), клавиши Fn: громкость и яркость"
 source=(https://dl.suckless.org/dwm/dwm-$version.tar.gz)
 depends=(libX11 libXft libXinerama fontconfig freetype)
@@ -262,7 +262,7 @@ keys = """	{{ 0, XF86XK_AudioRaiseVolume,  spawn, SHCMD("pactl set-sink-mute @DE
 	{{ 0, XF86XK_AudioMute,         spawn, SHCMD("pactl set-sink-mute @DEFAULT_SINK@ toggle") }},
 	{{ 0, XF86XK_AudioMicMute,      spawn, SHCMD("pactl set-source-mute @DEFAULT_SOURCE@ toggle") }},
 	{{ 0, XF86XK_MonBrightnessUp,   spawn, SHCMD("brightnessctl -q set 5%+") }},
-	{{ 0, XF86XK_MonBrightnessDown, spawn, SHCMD("brightnessctl -q -n 1% set 5%-") }},
+	{{ 0, XF86XK_MonBrightnessDown, spawn, SHCMD("[ $(brightnessctl get) -gt $(($(brightnessctl max)/10)) ] && brightnessctl -q set 5%-") }},
 """
 anchor = "static const Key keys[] = {{\\n"
 i = s.index(anchor) + len(anchor)
