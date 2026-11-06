@@ -5,14 +5,14 @@ source=(brightnessctl-$version.tar.gz::https://github.com/Hummer12007/brightness
 depends=()
 
 build() {
-  # без logind: права даёт udev-правило (группа video)
-  make CC=gcc PREFIX=/usr ENABLE_SYSTEMD=0
+  # без systemd/logind: собираем напрямую, права даёт udev-правило (группа video)
+  gcc -O2 -std=c99 -Wall -D_POSIX_C_SOURCE=200809L -DVERSION=\"$version\" brightnessctl.c -lm -o brightnessctl
 }
 package() {
-  make DESTDIR="$PKG" PREFIX=/usr INSTALL_UDEV_RULES=1 UDEVDIR=/usr/lib/udev/rules.d install
-  if [ ! -f "$PKG/usr/lib/udev/rules.d/90-brightnessctl.rules" ]; then
-    install -Dm644 90-brightnessctl.rules "$PKG/usr/lib/udev/rules.d/90-brightnessctl.rules"
-  fi
+  install -Dm755 brightnessctl "$PKG/usr/bin/brightnessctl"
+  install -Dm644 90-brightnessctl.rules "$PKG/usr/lib/udev/rules.d/90-brightnessctl.rules"
+  [ -f brightnessctl.1 ] && install -Dm644 brightnessctl.1 "$PKG/usr/share/man/man1/brightnessctl.1"
+  true
 }
 post_install() {
   udevadm control --reload 2>/dev/null; udevadm trigger -s backlight 2>/dev/null
