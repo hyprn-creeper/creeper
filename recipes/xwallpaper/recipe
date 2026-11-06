@@ -1,0 +1,16 @@
+name=xwallpaper
+version=0.7.6
+desc="xwallpaper — обои рабочего стола (PNG, JPEG)"
+source=(https://github.com/stoeckmann/xwallpaper/releases/download/v$version/xwallpaper-$version.tar.xz)
+depends=(libxcb xcb-util xcb-util-image pixman libpng libjpeg-turbo)
+
+build() {
+  ./configure --prefix=/usr --without-seccomp --without-xpm --with-png --with-jpeg
+  make
+}
+package() { make DESTDIR="$PKG" install; }
+post_install() {
+  echo "Пример: xwallpaper --zoom ~/обои.jpg"
+  echo "Чтобы обои ставились при входе в dwm: cp картинка ~/.wallpaper  (поддерживается hyprn-dwm)"
+  true
+}

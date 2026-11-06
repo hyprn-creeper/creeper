@@ -1,0 +1,8 @@
+name=xcb-util
+version=0.4.1
+desc="xcb-util — вспомогательные функции XCB"
+source=(https://xcb.freedesktop.org/dist/xcb-util-$version.tar.xz)
+depends=(libxcb)
+
+build() { ./configure --prefix=/usr --disable-static; make; }
+package() { make DESTDIR="$PKG" install; }

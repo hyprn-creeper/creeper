@@ -1,0 +1,8 @@
+name=xcb-util-image
+version=0.4.1
+desc="xcb-util-image — работа с картинками в XCB"
+source=(https://xcb.freedesktop.org/dist/xcb-util-image-$version.tar.xz)
+depends=(xcb-util)
+
+build() { ./configure --prefix=/usr --disable-static; make; }
+package() { make DESTDIR="$PKG" install; }

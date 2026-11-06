@@ -349,7 +349,7 @@ package() {{ make PREFIX=/usr DESTDIR="$PKG" install; }}
 write("hyprn-dwm", '''
 name=hyprn-dwm
 version=1.0
-release=4
+release=5
 desc="рабочий стол Hyprn: Xorg + dwm + st + dmenu, команда startdwm"
 source=()
 depends=(xorg-server xf86-input-libinput xkbcomp xinit xauth setxkbmap xsetroot xrandr xset dejavu-fonts dwm st dmenu slstatus brightnessctl hyprn-audio)
@@ -362,6 +362,8 @@ package() {
 # сеанс dwm (свой можно положить в ~/.xinitrc — тогда запускай просто startx)
 setxkbmap -layout us,ru -option grp:alt_shift_toggle 2>/dev/null   # Alt+Shift — язык
 xsetroot -solid '#1b1d2b' 2>/dev/null
+# обои: положи картинку в ~/.wallpaper (нужен xwallpaper)
+[ -r "$HOME/.wallpaper" ] && command -v xwallpaper >/dev/null 2>&1 && xwallpaper --zoom "$HOME/.wallpaper"
 xset r rate 300 40 2>/dev/null
 # без elogind нет XDG_RUNTIME_DIR — программам (Discord, GTK, PulseAudio) он нужен.
 # Ставим ДО запуска чего-либо, иначе PulseAudio поднимется «не там» и его не будет видно
