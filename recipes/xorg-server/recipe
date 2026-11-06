@@ -8,9 +8,9 @@ backup=(etc/X11/Xwrapper.config)
 build() {
   mkdir -p build && cd build
   # без elogind/dbus (SysV) сервер работает от root через Xorg.wrap;
-  # glamor выключен — для него нужна Mesa (добавим позже вместе с GTK)
+  # glamor и GLX выключены — для них нужна Mesa (добавим позже вместе с GTK)
   meson setup .. --prefix=/usr --localstatedir=/var --buildtype=release \
-        -D glamor=false -D systemd_logind=false -D suid_wrapper=true \
+        -D glamor=false -D glx=false -D systemd_logind=false -D suid_wrapper=true \
         -D secure-rpc=false -D xkb_output_dir=/var/lib/xkb
   ninja -j"$JOBS"
 }
