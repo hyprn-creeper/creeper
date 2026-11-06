@@ -37,11 +37,11 @@ jobs:
           [ -f Discord/discord ] && ! file -b Discord/discord | grep -q ELF && { echo "== discord (скрипт)"; cat Discord/discord; }
           echo "== строки загрузчика"; strings -n 8 Discord/updater_bootstrap | grep -iE 'https?://|\.config|XDG|HOME|discord_|--' | sort -u | head -n 60
           echo "== пробный запуск загрузчика (90 с, виртуальный экран)"
-          export HOME=/tmp/h; mkdir -p $HOME
+          export HOME=/tmp/h XDG_CONFIG_HOME=/tmp/h/.config; mkdir -p $HOME
           ( cd Discord && timeout 90 xvfb-run -a ./discord --no-sandbox ) > /tmp/run.log 2>&1 || true
-          tail -n 40 /tmp/run.log
-          echo "== что скачалось"; find $HOME -maxdepth 6 -type d | head -n 40
-          app=$(find $HOME -type f -name 'Discord' -perm -u+x 2>/dev/null | head -n1)
+          grep -iE 'error|cannot open|not found|fail' /tmp/run.log | grep -v dbus | head -n 25
+          echo "== что скачалось"; find $HOME/.config/discord -maxdepth 2 | head -n 40
+          app=$(find $HOME/.config/discord -mindepth 2 -type f -name 'Discord' -perm -u+x 2>/dev/null | head -n1)
           [ -z "$app" ] && app=$(find $HOME -type f -perm -u+x -size +50M 2>/dev/null | head -n1)
           echo "== приложение: $app"
           if [ -n "$app" ]; then
