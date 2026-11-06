@@ -8,16 +8,17 @@ depends=(gtk3 dbus alsa-lib pulseaudio nss)
 
 build() { :; }
 package() {
-  install -dm755 "$PKG/usr/lib" "$PKG/usr/bin"
-  cp -a firefox "$PKG/usr/lib/firefox"
+  # creeper уже зашёл в распакованную папку firefox/
+  install -dm755 "$PKG/usr/lib/firefox" "$PKG/usr/bin"
+  cp -a . "$PKG/usr/lib/firefox/"
   ln -s ../lib/firefox/firefox "$PKG/usr/bin/firefox"
   # обновления — через creeper (папка принадлежит root, сам себя Firefox не обновит)
   install -Dm644 /dev/stdin "$PKG/usr/lib/firefox/distribution/policies.json" << 'EOS'
 { "policies": { "DisableAppUpdate": true } }
 EOS
   for s in 16 32 48 64 128; do
-    [ -f firefox/browser/chrome/icons/default/default$s.png ] &&
-      install -Dm644 firefox/browser/chrome/icons/default/default$s.png "$PKG/usr/share/icons/hicolor/${s}x${s}/apps/firefox.png"
+    [ -f browser/chrome/icons/default/default$s.png ] &&
+      install -Dm644 browser/chrome/icons/default/default$s.png "$PKG/usr/share/icons/hicolor/${s}x${s}/apps/firefox.png"
   done
   install -Dm644 /dev/stdin "$PKG/usr/share/applications/firefox.desktop" << 'EOS'
 [Desktop Entry]
