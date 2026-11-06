@@ -1,0 +1,38 @@
+name=firefox
+version=159.0.1
+desc="Firefox — браузер (официальная сборка Mozilla, русский)"
+# бинарник Mozilla не кладём в свой репозиторий — каждый раз качаем с ftp.mozilla.org
+norepo=1
+source=(https://ftp.mozilla.org/pub/firefox/releases/$version/linux-x86_64/ru/firefox-$version.tar.xz)
+depends=(gtk3 dbus alsa-lib pulseaudio nss)
+
+build() { :; }
+package() {
+  install -dm755 "$PKG/usr/lib" "$PKG/usr/bin"
+  cp -a firefox "$PKG/usr/lib/firefox"
+  ln -s ../lib/firefox/firefox "$PKG/usr/bin/firefox"
+  # обновления — через creeper (папка принадлежит root, сам себя Firefox не обновит)
+  install -Dm644 /dev/stdin "$PKG/usr/lib/firefox/distribution/policies.json" << 'EOS'
+{ "policies": { "DisableAppUpdate": true } }
+EOS
+  for s in 16 32 48 64 128; do
+    [ -f firefox/browser/chrome/icons/default/default$s.png ] &&
+      install -Dm644 firefox/browser/chrome/icons/default/default$s.png "$PKG/usr/share/icons/hicolor/${s}x${s}/apps/firefox.png"
+  done
+  install -Dm644 /dev/stdin "$PKG/usr/share/applications/firefox.desktop" << 'EOS'
+[Desktop Entry]
+Name=Firefox
+Exec=firefox %u
+Icon=firefox
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+EOS
+  # каких библиотек не хватает в системе (только предупреждение)
+  LD_LIBRARY_PATH="$PKG/usr/lib/firefox" ldd "$PKG/usr/lib/firefox/libxul.so" | grep 'not found' && echo "!! не хватает библиотек выше" || echo "все библиотеки на месте"
+}
+post_install() {
+  gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null
+  echo "Запуск: firefox  (или Super+P → firefox)"
+  true
+}
