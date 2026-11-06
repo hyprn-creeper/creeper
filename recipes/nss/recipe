@@ -1,5 +1,6 @@
 name=nss
 version=3.115
+release=2
 desc="криптография Mozilla NSS (нужна браузерам и Discord)"
 source=(https://archive.mozilla.org/pub/security/nss/releases/NSS_3_115_RTM/src/nss-$version.tar.gz
         https://www.linuxfromscratch.org/patches/blfs/12.4/nss-standalone-1.patch)

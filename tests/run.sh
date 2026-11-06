@@ -230,6 +230,13 @@ mk hello 1.0; rec hello 1.0 ""
 check "norepo-пакет установлен" [ -x "$R/usr/bin/secret" ]
 run index; check "index без norepo-пакета" bash -c "grep -q '^hello ' <<<\"\$0\" && ! grep -q '^secret ' <<<\"\$0\"" "$OUT"
 
+echo "== 17. пакет с конфликтом не попадает в кэш бинарников"
+reset_root; mk hello 1.0; rec hello 1.0 ""; "$C" install hello >/dev/null 2>&1
+mk evil 1.0 'install -Dm755 /dev/null $(DESTDIR)/usr/bin/hello'; rec evil 1.0 ""
+"$C" install evil >/dev/null 2>&1
+check "бракованный бинарник не в кэше" [ ! -e "$R/var/cache/creeper/bin/evil-1.0-1.tar.zst" ]
+run index; check "и не в индексе" bash -c "! grep -q '^evil ' <<<\"\$0\"" "$OUT"
+
 echo
 printf 'Итого: \e[32m%d прошло\e[0m, \e[31m%d упало\e[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

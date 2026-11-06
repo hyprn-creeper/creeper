@@ -316,14 +316,15 @@ build_pkg() {
   printf 'name=%s\nversion=%s\nrelease=%s\nbuilt=%s\n' "$p" "$ver" "$rel" "$(date '+%F %R')" > "$PKG/.CREEPER/info"
   # norepo=1 — пакет с чужой закрытой программой: ставится только локально, на ферму не выкладывается
   [ "$(meta "$p" norepo)" = 1 ] && echo "norepo=1" >> "$PKG/.CREEPER/info"
-  if [ "$CREEPER_KEEPBIN" = 1 ]; then
-    mkdir -p "$BINCACHE"
-    local bf; bf=$BINCACHE/$(binfile "$p" "$ver" "$rel")
-    if tar --zstd -C "$PKG" -cpf "$bf.part" . 2>>"$log"; then mv "$bf.part" "$bf"; info "бинарник сохранён: ${bf##*/}"
-    else rm -f "$bf.part"; warn "$p: бинарник не сохранился (нет zstd?)"; fi
+  # бинарник упаковываем сейчас (дерево ещё нетронуто), а в кэш кладём только после
+  # успешной установки — иначе пакет с конфликтом попал бы на ферму
+  local bf=; if [ "$CREEPER_KEEPBIN" = 1 ]; then
+    mkdir -p "$BINCACHE"; bf=$BINCACHE/$(binfile "$p" "$ver" "$rel")
+    tar --zstd -C "$PKG" -cpf "$bf.pending" . 2>>"$log" || { rm -f "$bf.pending"; bf=; warn "$p: бинарник не сохранился (нет zstd?)"; }
   fi
 
   install_tree "$p" "$ver"
+  if [ -n "$bf" ]; then mv "$bf.pending" "$bf"; info "бинарник сохранён: ${bf##*/}"; fi
   history_add "install $p-$ver-$rel (сборка, $((SECONDS - t0)) с)"
   say "$CB$p-$ver$CN установлен за $((SECONDS - t0)) с"
   rm -rf "$w"
@@ -750,7 +751,7 @@ cmd_clean() {
   local before after
   before=$(du -sm "$WORK" "$SOURCES" "$BINCACHE" 2>/dev/null | awk '{s+=$1} END{print s+0}')
   rm -rf "${WORK:?}"/* "$WORK"/.[!.]* 2>/dev/null
-  find "$SOURCES" "$BINCACHE" -name '*.part' -delete 2>/dev/null
+  find "$SOURCES" "$BINCACHE" \( -name '*.part' -o -name '*.pending' \) -delete 2>/dev/null
   if [ "${1:-}" = --all ]; then
     # исходники и бинарники, не относящиеся к установленным версиям
     local f keep d p v r
