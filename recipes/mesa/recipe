@@ -8,7 +8,7 @@ build() {
   # Mesa 25+ требует для iris LLVM+libclc (часы сборки); 24.1 — последняя без них
   mkdir -p build && cd build
   meson setup .. --prefix=/usr --buildtype=release \
-        -D platforms=x11 -D gallium-drivers=iris,softpipe -D vulkan-drivers= \
+        -D platforms=x11 -D gallium-drivers=iris,swrast -D vulkan-drivers= \
         -D llvm=disabled -D valgrind=disabled -D libunwind=disabled \
         -D video-codecs= -D gbm=enabled -D egl=enabled -D glx=dri -D gles2=enabled
   ninja -j"$JOBS"
