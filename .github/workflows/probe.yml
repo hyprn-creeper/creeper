@@ -1,0 +1,47 @@
+# Зонд: скачивает программу и показывает, какие библиотеки ей нужны.
+# Ничего не публикует. Запуск: gh workflow run probe.yml -f what=discord
+name: probe
+run-name: "probe: ${{ inputs.what || 'регистрация' }}"
+
+on:
+  push:
+    paths: [".github/workflows/probe.yml"]
+  workflow_dispatch:
+    inputs:
+      what:
+        description: "discord | kernel"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    env:
+      WHAT: ${{ inputs.what }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Discord
+        if: env.WHAT == 'discord'
+        run: |
+          cd /tmp
+          curl -fsSL -o discord.tar.gz -w 'URL: %{url_effective}\n' 'https://discord.com/api/download?platform=linux&format=tar.gz'
+          tar -xzf discord.tar.gz
+          ls Discord
+          echo "== resources/build_info.json"; cat Discord/resources/build_info.json || true
+          echo "== NEEDED (все ELF в пакете)"
+          find Discord -type f -exec sh -c 'file -b "$1" | grep -q ELF && readelf -d "$1" 2>/dev/null | sed -n "s/.*Shared library: \[\(.*\)\]/\1/p"' _ {} \; | sort -u
+          echo "== бандл (свои .so)"; find Discord -name '*.so*' -printf '%f\n' | sort
+          echo "== Electron"; strings Discord/Discord | grep -m3 -E '^Electron/|Chrome/[0-9]+' || true
+          echo "== dlopen-строки"; strings Discord/Discord | grep -E '^lib[a-z0-9_+-]+\.so(\.[0-9]+)*$' | sort -u | head -n 80
+
+      - name: Kernel
+        if: env.WHAT == 'kernel'
+        run: |
+          curl -fsSL https://www.kernel.org/releases.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('latest_stable', d['latest_stable']['version']); [print(r['moniker'], r['version']) for r in d['releases'][:8]]"
+          curl -fsSL https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/main/PKGBUILD | grep -E '^(pkgver|pkgrel)='
+          curl -fsSL -o /tmp/config https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/main/config
+          head -n 4 /tmp/config; grep -E 'CONFIG_(MODULE_COMPRESS|MODULE_SIG|DEBUG_INFO|RTW88_8821CE|BLK_DEV_NVME|EXT4_FS|DRM_I915)[ =]' /tmp/config
