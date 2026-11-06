@@ -1,6 +1,7 @@
 name=dwm
 version=6.8
-desc="dwm — плиточный оконный менеджер (suckless)"
+release=2
+desc="dwm — плиточный оконный менеджер (suckless), клавиши Fn: громкость и яркость"
 source=(https://dl.suckless.org/dwm/dwm-$version.tar.gz)
 depends=(libX11 libXft libXinerama fontconfig freetype)
 
@@ -11,6 +12,24 @@ prepare() {
   # клавиша-модификатор — Super (Win), как в Hyprland, а не Alt
   sed -i 's/#define MODKEY Mod1Mask/#define MODKEY Mod4Mask/' config.h
   sed -i 's/"monospace:size=10"/"DejaVu Sans Mono:size=11"/g' config.h
+  # клавиши Fn ноутбука: громкость (PulseAudio) и яркость (brightnessctl)
+  python3 - << "PY"
+s = open("config.h").read()
+s = s.replace("/* appearance */", "#include <X11/XF86keysym.h>\n\n/* appearance */", 1)
+keys = """	{ 0, XF86XK_AudioRaiseVolume,  spawn, SHCMD("pactl set-sink-mute @DEFAULT_SINK@ 0; pactl set-sink-volume @DEFAULT_SINK@ +5%") },
+	{ 0, XF86XK_AudioLowerVolume,  spawn, SHCMD("pactl set-sink-volume @DEFAULT_SINK@ -5%") },
+	{ 0, XF86XK_AudioMute,         spawn, SHCMD("pactl set-sink-mute @DEFAULT_SINK@ toggle") },
+	{ 0, XF86XK_AudioMicMute,      spawn, SHCMD("pactl set-source-mute @DEFAULT_SOURCE@ toggle") },
+	{ 0, XF86XK_MonBrightnessUp,   spawn, SHCMD("brightnessctl -q set 5%+") },
+	{ 0, XF86XK_MonBrightnessDown, spawn, SHCMD("brightnessctl -q -n 1% set 5%-") },
+"""
+anchor = "static const Key keys[] = {\n"
+i = s.index(anchor) + len(anchor)
+i = s.index("\n", i) + 1          # после строки-комментария /* modifier key function argument */
+s = s[:i] + keys + s[i:]
+open("config.h", "w").write(s)
+PY
+  grep -q XF86XK_MonBrightnessUp config.h
 }
 build()   { make CC=gcc; }
 package() { make PREFIX=/usr DESTDIR="$PKG" install; }

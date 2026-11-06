@@ -1,9 +1,9 @@
 name=hyprn-dwm
 version=1.0
-release=2
+release=3
 desc="рабочий стол Hyprn: Xorg + dwm + st + dmenu, команда startdwm"
 source=()
-depends=(xorg-server xf86-input-libinput xkbcomp xinit xauth setxkbmap xsetroot xrandr xset dejavu-fonts dwm st dmenu slstatus)
+depends=(xorg-server xf86-input-libinput xkbcomp xinit xauth setxkbmap xsetroot xrandr xset dejavu-fonts dwm st dmenu slstatus brightnessctl hyprn-audio)
 
 build() { :; }
 package() {

@@ -1,6 +1,7 @@
 name=slstatus
 version=1.1
-desc="slstatus — строка состояния dwm (время, батарея, память)"
+release=2
+desc="slstatus — строка состояния dwm (громкость, яркость, батарея, время)"
 source=(https://dl.suckless.org/tools/slstatus-$version.tar.gz)
 depends=(libX11)
 
@@ -15,6 +16,8 @@ args = """static const struct arg args[] = {
 	/* function format          argument */
 	{ cpu_perc,     " CPU %s%% |",  NULL },
 	{ ram_perc,     " RAM %s%% |",  NULL },
+	{ run_command,  " VOL %s |",    "pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null | grep -q yes && echo off || pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -o '[0-9]*%' | head -n1" },
+	{ run_command,  " LCD %s |",    "brightnessctl -m 2>/dev/null | cut -d, -f4" },
 	{ battery_perc, " BAT %s%% |",  "BAT1" },
 	{ datetime,     " %s ",         "%d.%m %H:%M" },
 };"""

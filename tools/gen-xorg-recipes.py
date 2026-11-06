@@ -242,7 +242,8 @@ SL_MK = '''  sed -i -e 's#^X11INC = .*#X11INC = /usr/include#' -e 's#^X11LIB = .
 write("dwm", f'''
 name=dwm
 version=6.8
-desc="dwm — плиточный оконный менеджер (suckless)"
+release=2
+desc="dwm — плиточный оконный менеджер (suckless), клавиши Fn: громкость и яркость"
 source=(https://dl.suckless.org/dwm/dwm-$version.tar.gz)
 depends=(libX11 libXft libXinerama fontconfig freetype)
 
@@ -252,6 +253,24 @@ prepare() {{
   # клавиша-модификатор — Super (Win), как в Hyprland, а не Alt
   sed -i 's/#define MODKEY Mod1Mask/#define MODKEY Mod4Mask/' config.h
   sed -i 's/"monospace:size=10"/"DejaVu Sans Mono:size=11"/g' config.h
+  # клавиши Fn ноутбука: громкость (PulseAudio) и яркость (brightnessctl)
+  python3 - << "PY"
+s = open("config.h").read()
+s = s.replace("/* appearance */", "#include <X11/XF86keysym.h>\\n\\n/* appearance */", 1)
+keys = """	{{ 0, XF86XK_AudioRaiseVolume,  spawn, SHCMD("pactl set-sink-mute @DEFAULT_SINK@ 0; pactl set-sink-volume @DEFAULT_SINK@ +5%") }},
+	{{ 0, XF86XK_AudioLowerVolume,  spawn, SHCMD("pactl set-sink-volume @DEFAULT_SINK@ -5%") }},
+	{{ 0, XF86XK_AudioMute,         spawn, SHCMD("pactl set-sink-mute @DEFAULT_SINK@ toggle") }},
+	{{ 0, XF86XK_AudioMicMute,      spawn, SHCMD("pactl set-source-mute @DEFAULT_SOURCE@ toggle") }},
+	{{ 0, XF86XK_MonBrightnessUp,   spawn, SHCMD("brightnessctl -q set 5%+") }},
+	{{ 0, XF86XK_MonBrightnessDown, spawn, SHCMD("brightnessctl -q -n 1% set 5%-") }},
+"""
+anchor = "static const Key keys[] = {{\\n"
+i = s.index(anchor) + len(anchor)
+i = s.index("\\n", i) + 1          # после строки-комментария /* modifier key function argument */
+s = s[:i] + keys + s[i:]
+open("config.h", "w").write(s)
+PY
+  grep -q XF86XK_MonBrightnessUp config.h
 }}
 build()   {{ make CC=gcc; }}
 package() {{ make PREFIX=/usr DESTDIR="$PKG" install; }}
@@ -298,7 +317,8 @@ package() {{ make PREFIX=/usr DESTDIR="$PKG" install; }}
 write("slstatus", f'''
 name=slstatus
 version=1.1
-desc="slstatus — строка состояния dwm (время, батарея, память)"
+release=2
+desc="slstatus — строка состояния dwm (громкость, яркость, батарея, время)"
 source=(https://dl.suckless.org/tools/slstatus-$version.tar.gz)
 depends=(libX11)
 
@@ -313,6 +333,8 @@ args = """static const struct arg args[] = {{
 	/* function format          argument */
 	{{ cpu_perc,     " CPU %s%% |",  NULL }},
 	{{ ram_perc,     " RAM %s%% |",  NULL }},
+	{{ run_command,  " VOL %s |",    "pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null | grep -q yes && echo off || pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -o '[0-9]*%' | head -n1" }},
+	{{ run_command,  " LCD %s |",    "brightnessctl -m 2>/dev/null | cut -d, -f4" }},
 	{{ battery_perc, " BAT %s%% |",  "BAT1" }},
 	{{ datetime,     " %s ",         "%d.%m %H:%M" }},
 }};"""
@@ -327,10 +349,10 @@ package() {{ make PREFIX=/usr DESTDIR="$PKG" install; }}
 write("hyprn-dwm", '''
 name=hyprn-dwm
 version=1.0
-release=2
+release=3
 desc="рабочий стол Hyprn: Xorg + dwm + st + dmenu, команда startdwm"
 source=()
-depends=(xorg-server xf86-input-libinput xkbcomp xinit xauth setxkbmap xsetroot xrandr xset dejavu-fonts dwm st dmenu slstatus)
+depends=(xorg-server xf86-input-libinput xkbcomp xinit xauth setxkbmap xsetroot xrandr xset dejavu-fonts dwm st dmenu slstatus brightnessctl hyprn-audio)
 
 build() { :; }
 package() {
