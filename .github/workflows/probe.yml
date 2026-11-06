@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       what:
-        description: "discord | kernel | urls | blfs:раздел/страница,раздел/страница"
+        description: "discord | kernel | urls | lfs-discord | blfs:раздел/страница,раздел/страница"
         required: true
         type: string
 
@@ -103,4 +103,29 @@ jobs:
             done < <(bash -c '. "$1" >/dev/null 2>&1; printf "%s\n" "${source[@]}"' _ "$r")
           done
           echo "плохих ссылок: $bad"
+
+      - uses: actions/checkout@v5
+        if: env.WHAT == 'lfs-discord'
+      - name: Discord внутри копии LFS
+        if: env.WHAT == 'lfs-discord'
+        run: |
+          R=/lfs
+          gh release download base -p 'lfs-builder.tar.zst' -D /tmp
+          sudo mkdir -p $R && zstd -dc /tmp/lfs-builder.tar.zst | sudo tar -C $R -xpf -
+          sudo install -m755 creeper $R/usr/bin/creeper
+          sudo rm -rf $R/var/lib/creeper/recipes; sudo mkdir -p $R/var/lib/creeper; sudo cp -r recipes $R/var/lib/creeper/recipes
+          printf 'BINREPO="https://github.com/%s/releases/download/bin"\n' "$GITHUB_REPOSITORY" | sudo tee $R/etc/creeper.conf
+          sudo cp -L /etc/resolv.conf $R/etc/resolv.conf
+          for m in dev dev/pts proc sys; do :; done
+          sudo mount --bind /dev $R/dev; sudo mount -t devpts devpts $R/dev/pts; sudo mount -t proc proc $R/proc; sudo mount -t sysfs sysfs $R/sys; sudo mount -t tmpfs tmpfs $R/run
+          sudo chroot $R /usr/bin/env -i HOME=/root PATH=/usr/bin:/usr/sbin /bin/bash -c 'creeper install discord' 2>&1 | grep -E '==>|xx>|!!>' | grep -v 'Ссссс'
+          echo "== загрузчик внутри LFS"
+          sudo chroot $R /usr/bin/env -i HOME=/root PATH=/usr/bin:/usr/sbin /bin/bash -c \
+            'mkdir -p /root/.config/discord && /usr/share/discord/updater_bootstrap --no-zenity /root/.config/discord stable https://updates.discord.com/' 2>&1 | tail -n 5
+          echo "== недостающие библиотеки (ldd)"
+          sudo chroot $R /usr/bin/env -i PATH=/usr/bin:/usr/sbin /bin/bash -c \
+            'cd /root/.config/discord/app-*/ && for f in Discord *.so* $(find . -name "*.node"); do [ -f "$f" ] && ldd "$f" 2>/dev/null | grep "not found" | sed "s|^|$f: |"; done | sort -u'
+          echo "== запуск Discord --version"
+          sudo chroot $R /usr/bin/env -i HOME=/root PATH=/usr/bin:/usr/sbin /bin/bash -c 'cd /root/.config/discord/app-*/ && timeout 30 ./Discord --version --no-sandbox' 2>&1 | tail -n 15
+          for m in run sys proc dev/pts dev; do sudo umount $R/$m || true; done
 
