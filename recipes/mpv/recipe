@@ -1,0 +1,15 @@
+name=mpv
+version=0.42.0
+desc="mpv — видеоплеер (видео, музыка, YouTube через yt-dlp)"
+source=(mpv-$version.tar.gz::https://github.com/mpv-player/mpv/archive/refs/tags/v$version.tar.gz)
+depends=(ffmpeg libass libplacebo lua52 libXpresent libXScrnSaver libXinerama libXrandr libXext libX11 libxkbcommon mesa pulseaudio alsa-lib libjpeg-turbo yt-dlp)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release -D libmpv=false -D cplayer=true \
+        -D x11=enabled -D wayland=disabled -D vulkan=disabled -D gl=enabled -D gl-x11=enabled \
+        -D egl-x11=enabled -D pulse=enabled -D alsa=enabled -D lua=enabled -D javascript=disabled \
+        -D manpage-build=disabled -D html-build=disabled -D pdf-build=disabled
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

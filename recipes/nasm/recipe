@@ -1,0 +1,8 @@
+name=nasm
+version=3.01
+desc="nasm — ассемблер (для сборки ffmpeg)"
+source=(https://www.nasm.us/pub/nasm/releasebuilds/$version/nasm-$version.tar.xz)
+depends=()
+
+build() { ./configure --prefix=/usr; make; }
+package() { make DESTDIR="$PKG" install; }

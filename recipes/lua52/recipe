@@ -1,0 +1,24 @@
+name=lua52
+version=5.2.4
+desc="Lua 5.2 — скрипты mpv (в т.ч. YouTube через yt-dlp)"
+source=(https://www.lua.org/ftp/lua-$version.tar.gz)
+depends=()
+
+build() { make linux MYCFLAGS="-fPIC" CC=gcc; }
+package() {
+  install -Dm755 src/lua  "$PKG/usr/bin/lua5.2"
+  install -Dm755 src/luac "$PKG/usr/bin/luac5.2"
+  install -Dm644 src/liblua.a "$PKG/usr/lib/liblua5.2.a"
+  install -dm755 "$PKG/usr/include/lua5.2"
+  install -m644 src/lua.h src/luaconf.h src/lualib.h src/lauxlib.h src/lua.hpp "$PKG/usr/include/lua5.2/"
+  install -Dm644 /dev/stdin "$PKG/usr/lib/pkgconfig/lua52.pc" << EOS
+prefix=/usr
+libdir=\${prefix}/lib
+includedir=\${prefix}/include/lua5.2
+Name: Lua
+Description: Lua 5.2 (static)
+Version: $version
+Libs: -L\${libdir} -llua5.2 -lm -ldl
+Cflags: -I\${includedir}
+EOS
+}

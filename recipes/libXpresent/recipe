@@ -1,0 +1,8 @@
+name=libXpresent
+version=1.0.1
+desc="libXpresent — расширение Present (для mpv)"
+source=(https://www.x.org/pub/individual/lib/libXpresent-$version.tar.xz)
+depends=(libX11 libXext libXfixes libXrandr)
+
+build() { ./configure --prefix=/usr --disable-static; make; }
+package() { make DESTDIR="$PKG" install; }

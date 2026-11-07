@@ -1,0 +1,19 @@
+name=libplacebo
+version=7.360.1
+desc="libplacebo — отрисовка видео (для mpv)"
+# в архивах нет подмодулей (glad, jinja) — берём из git
+source=()
+depends=(mesa python-mako)
+
+prepare() {
+  git clone --depth 1 -b v$version --recurse-submodules --shallow-submodules \
+      https://code.videolan.org/videolan/libplacebo.git .
+}
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release -D vulkan=disabled -D opengl=enabled \
+        -D glslang=disabled -D shaderc=disabled -D lcms=disabled -D d3d11=disabled \
+        -D demos=false -D tests=false -D libdovi=disabled -D xxhash=disabled -D unwind=disabled
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

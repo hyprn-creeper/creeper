@@ -1,0 +1,13 @@
+name=ffmpeg
+version=8.0.1
+desc="FFmpeg — кодеки видео и звука, конвертер ffmpeg"
+source=(https://ffmpeg.org/releases/ffmpeg-$version.tar.xz)
+depends=(nasm libdrm libxcb pulseaudio alsa-lib freetype fribidi)
+
+build() {
+  ./configure --prefix=/usr --enable-gpl --enable-version3 --enable-shared --disable-static \
+              --disable-debug --disable-doc --enable-openssl --enable-libpulse --enable-libdrm \
+              --enable-libxcb --enable-libfreetype --enable-libfribidi
+  make -j"$JOBS"
+}
+package() { make DESTDIR="$PKG" install; }
