@@ -140,4 +140,4 @@ jobs:
       - name: Команда
         if: startsWith(env.WHAT, 'sh:')
         run: |
-          cd /tmp && echo "${WHAT#sh:}" | base64 -d > cmd.sh && bash cmd.sh 2>&1 | tail -n 150
+          cd /tmp && echo "${WHAT#sh:}" | base64 -d > cmd.sh && bash cmd.sh 2>&1 | tail -n 400
