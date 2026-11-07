@@ -1,0 +1,8 @@
+name=libev
+version=4.33
+desc="libev — цикл событий (для picom)"
+source=(http://dist.schmorp.de/libev/Attic/libev-$version.tar.gz)
+depends=()
+
+build() { ./configure --prefix=/usr --disable-static; make; }
+package() { make DESTDIR="$PKG" install; rm -f "$PKG/usr/include/event.h"; }

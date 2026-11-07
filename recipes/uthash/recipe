@@ -1,0 +1,8 @@
+name=uthash
+version=2.3.0
+desc="uthash — хеш-таблицы для C (заголовки)"
+source=(uthash-$version.tar.gz::https://github.com/troydhanson/uthash/archive/refs/tags/v$version.tar.gz)
+depends=()
+
+build() { :; }
+package() { install -dm755 "$PKG/usr/include"; install -m644 src/*.h "$PKG/usr/include/"; }

@@ -1,0 +1,12 @@
+name=picom
+version=12.5
+desc="picom — композитор: прозрачность, тени, без разрывов"
+source=(picom-$version.tar.gz::https://github.com/yshui/picom/archive/refs/tags/v$version.tar.gz)
+depends=(libconfig libev uthash pcre2 libepoxy dbus libxcb xcb-util-image xcb-util-renderutil libX11 pixman mesa)
+
+build() {
+  mkdir -p build && cd build
+  meson setup .. --prefix=/usr --buildtype=release -D with_docs=false -D regex=true -D opengl=true -D dbus=true
+  ninja -j"$JOBS"
+}
+package() { cd build && DESTDIR="$PKG" ninja install; }

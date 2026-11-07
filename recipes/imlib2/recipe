@@ -1,0 +1,8 @@
+name=imlib2
+version=1.12.7
+desc="imlib2 — библиотека картинок (для nsxiv, scrot)"
+source=(https://downloads.sourceforge.net/enlightenment/imlib2-$version.tar.xz)
+depends=(libpng libjpeg-turbo freetype libX11 libXext)
+
+build() { ./configure --prefix=/usr --disable-static; make; }
+package() { make DESTDIR="$PKG" install; }

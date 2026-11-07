@@ -1,0 +1,8 @@
+name=xcb-util-renderutil
+version=0.3.10
+desc="xcb-util-renderutil — XRender для XCB"
+source=(https://xcb.freedesktop.org/dist/xcb-util-renderutil-$version.tar.xz)
+depends=(libxcb)
+
+build() { ./configure --prefix=/usr --disable-static; make; }
+package() { make DESTDIR="$PKG" install; }

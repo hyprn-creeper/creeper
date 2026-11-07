@@ -1,0 +1,8 @@
+name=xclip
+version=0.13
+desc="xclip — буфер обмена X из командной строки"
+source=(xclip-$version.tar.gz::https://github.com/astrand/xclip/archive/refs/tags/$version.tar.gz)
+depends=(libXmu)
+
+build() { autoreconf -fi; ./configure --prefix=/usr; make; }
+package() { make DESTDIR="$PKG" install; }

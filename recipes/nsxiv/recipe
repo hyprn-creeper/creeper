@@ -1,0 +1,8 @@
+name=nsxiv
+version=27.1
+desc="nsxiv — быстрый просмотрщик картинок"
+source=(nsxiv-$version.tar.gz::https://github.com/nsxiv/nsxiv/archive/refs/tags/v$version.tar.gz)
+depends=(imlib2 libXft fontconfig freetype)
+
+build() { make CC=gcc PREFIX=/usr HAVE_LIBEXIF=0 HAVE_LIBWEBP=0; }
+package() { make PREFIX=/usr DESTDIR="$PKG" HAVE_LIBEXIF=0 HAVE_LIBWEBP=0 install; }

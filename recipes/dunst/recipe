@@ -1,0 +1,8 @@
+name=dunst
+version=1.13.2
+desc="dunst — всплывающие уведомления"
+source=(dunst-$version.tar.gz::https://github.com/dunst-project/dunst/archive/refs/tags/v$version.tar.gz)
+depends=(dbus glib pango cairo gdk-pixbuf libXinerama libXrandr libXScrnSaver libnotify)
+
+build() { make CC=gcc PREFIX=/usr WAYLAND=0 SYSTEMD=0; }
+package() { make PREFIX=/usr WAYLAND=0 SYSTEMD=0 DESTDIR="$PKG" install; }
