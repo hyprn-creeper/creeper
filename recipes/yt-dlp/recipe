@@ -1,0 +1,8 @@
+name=yt-dlp
+version=2026.10.26
+desc="yt-dlp — скачивание видео с YouTube и др. (нужен python3)"
+source=(yt-dlp-$version::https://github.com/yt-dlp/yt-dlp/releases/download/$version/yt-dlp)
+depends=()
+
+build() { :; }
+package() { install -Dm755 "$SOURCES/yt-dlp-$version" "$PKG/usr/bin/yt-dlp"; }

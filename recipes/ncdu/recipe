@@ -1,0 +1,8 @@
+name=ncdu
+version=1.22
+desc="ncdu — что занимает место на диске"
+source=(https://dev.yorhel.nl/download/ncdu-$version.tar.gz)
+depends=()
+
+build() { ./configure --prefix=/usr; make; }
+package() { make DESTDIR="$PKG" install; }

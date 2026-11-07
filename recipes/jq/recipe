@@ -1,0 +1,8 @@
+name=jq
+version=1.8.2
+desc="jq — обработка JSON в командной строке"
+source=(https://github.com/jqlang/jq/releases/download/jq-$version/jq-$version.tar.gz)
+depends=()
+
+build() { ./configure --prefix=/usr --disable-static --disable-docs --with-oniguruma=builtin; make; }
+package() { make DESTDIR="$PKG" install; rm -rf "${PKG:?}/usr/share/doc"; }

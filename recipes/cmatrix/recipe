@@ -1,0 +1,8 @@
+name=cmatrix
+version=2.0
+desc="cmatrix — «Матрица» в терминале"
+source=(cmatrix-$version.tar.gz::https://github.com/abishekvashok/cmatrix/archive/refs/tags/v$version.tar.gz)
+depends=()
+
+build() { autoreconf -fi; ./configure --prefix=/usr --without-fonts; make; }
+package() { make DESTDIR="$PKG" install; }

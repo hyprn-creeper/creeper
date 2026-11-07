@@ -1,0 +1,8 @@
+name=ranger
+version=1.9.4
+desc="ranger — файловый менеджер в терминале (vim-клавиши)"
+source=(ranger-$version.tar.gz::https://github.com/ranger/ranger/archive/refs/tags/v$version.tar.gz)
+depends=()
+
+build() { pip3 wheel -w dist --no-build-isolation --no-deps --no-cache-dir "$PWD"; }
+package() { pip3 install --root="$PKG" --no-index --find-links dist --no-user --no-deps --no-compile ranger-fm; }

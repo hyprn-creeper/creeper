@@ -1,0 +1,14 @@
+name=7zip
+version=26.05
+desc="7-Zip (7zz) — архивы 7z, zip, rar и др."
+source=(https://github.com/ip7z/7zip/releases/download/$version/7z${version//./}-src.tar.xz)
+depends=()
+
+build() {
+  cd CPP/7zip/Bundles/Alone2
+  make -j"$JOBS" -f ../../cmpl_gcc.mak
+}
+package() {
+  install -Dm755 CPP/7zip/Bundles/Alone2/b/g/7zz "$PKG/usr/bin/7zz"
+  ln -s 7zz "$PKG/usr/bin/7z"
+}
