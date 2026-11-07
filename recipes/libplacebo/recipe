@@ -3,7 +3,7 @@ version=7.360.1
 desc="libplacebo — отрисовка видео (для mpv)"
 # в архивах нет подмодулей (glad, jinja) — берём из git
 source=()
-depends=(mesa python-mako)
+depends=(mesa python-mako git)
 
 prepare() {
   git clone --depth 1 -b v$version --recurse-submodules --shallow-submodules \
