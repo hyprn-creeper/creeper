@@ -2,7 +2,7 @@ name=scrot
 version=2.0.0
 desc="scrot — скриншоты (scrot, scrot -s — выделить область)"
 source=(https://github.com/resurrecting-open-source-projects/scrot/releases/download/$version/scrot-$version.tar.gz)
-depends=(imlib2 libXcomposite libXext libXfixes libXinerama)
+depends=(imlib2 libXcomposite libXext libXfixes libXinerama libXrandr)
 
 build() { ./configure --prefix=/usr; make; }
 package() { make DESTDIR="$PKG" install; }
