@@ -1,7 +1,9 @@
 name=picom
 version=12.5
+release=2
 desc="picom — композитор: прозрачность, тени, без разрывов"
 source=(picom-$version.tar.gz::https://github.com/yshui/picom/archive/refs/tags/v$version.tar.gz)
+backup=(etc/xdg/picom.conf)
 depends=(libconfig libev uthash pcre2 libepoxy dbus libxcb xcb-util-image xcb-util-renderutil libX11 pixman mesa)
 
 build() {
@@ -9,4 +11,21 @@ build() {
   meson setup .. --prefix=/usr --buildtype=release -D with_docs=false -D regex=true -D opengl=true -D dbus=true
   ninja -j"$JOBS"
 }
-package() { cd build && DESTDIR="$PKG" ninja install; }
+package() {
+  cd build && DESTDIR="$PKG" ninja install
+  # picom 12 без настроек не стартует («Backend not specified») — свой конфиг по умолчанию
+  install -Dm644 /dev/stdin "$PKG/etc/xdg/picom.conf" << 'EOS'
+# picom (Hyprn): видеокарта, без разрывов, мягкие тени и плавное появление окон
+# свой вариант: ~/.config/picom/picom.conf
+backend = "glx";
+vsync = true;
+shadow = true;
+shadow-radius = 10;
+shadow-opacity = 0.4;
+shadow-exclude = [ "class_g = 'dwm'", "_GTK_FRAME_EXTENTS@" ];
+fading = true;
+fade-delta = 5;
+inactive-opacity = 0.95;
+opacity-rule = [ "92:class_g = 'st-256color'" ];
+EOS
+}
