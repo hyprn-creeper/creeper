@@ -1,0 +1,9 @@
+name=font-unifont-upper
+version=18.0.01
+desc="GNU Unifont (верхние плоскости): символы Legacy Computing — секстанты для fetch и др."
+source=(https://ftp.gnu.org/gnu/unifont/unifont-$version/unifont_upper-$version.otf)
+depends=(fontconfig)
+
+build() { :; }
+package() { install -Dm644 "$SOURCES/unifont_upper-$version.otf" "$PKG/usr/share/fonts/unifont/unifont_upper.otf"; }
+post_install() { fc-cache -f /usr/share/fonts/unifont >/dev/null 2>&1; true; }
