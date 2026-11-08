@@ -21,6 +21,6 @@ package() {
   [ -d share/terminfo ] && { install -dm755 "$PKG/usr/share/terminfo"; cp -a share/terminfo/. "$PKG/usr/share/terminfo/"; }
   # проверка: каких системных библиотек не хватает
   miss=$(for f in "$PKG"/usr/lib/kitty/lib/kitty/glfw-x11.so "$PKG"/usr/lib/kitty/lib/kitty/fast_data_types.so "$PKG"/usr/lib/kitty/bin/kitty; do
-           [ -e "$f" ] && LD_LIBRARY_PATH="$PKG/usr/lib/kitty/lib" ldd "$f" | grep 'not found'; done | sort -u)
+           [ -e "$f" ] && LD_LIBRARY_PATH="$PKG/usr/lib/kitty/lib" /usr/lib/ld-linux-x86-64.so.2 --list "$f" | grep 'not found'; done | sort -u)
   [ -z "$miss" ] || { echo "НЕ ХВАТАЕТ: $miss"; ls "$PKG/usr/lib/kitty/lib" "$PKG/usr/lib/kitty/lib/kitty" | head -50; return 1; }
 }
