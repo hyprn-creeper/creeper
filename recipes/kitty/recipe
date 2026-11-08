@@ -1,0 +1,26 @@
+name=kitty
+version=0.50.0
+desc="kitty — терминал на видеокарте (сам рисует блоки/секстанты, картинки, вкладки)"
+url=https://sw.kovidgoyal.net/kitty/
+# официальная самодостаточная сборка автора; в свой репозиторий не кладём
+norepo=1
+source=(https://github.com/kovidgoyal/kitty/releases/download/v$version/kitty-$version-x86_64.txz)
+depends=(libX11 libxkbcommon mesa fontconfig freetype dbus)
+
+build() { :; }
+package() {
+  install -dm755 "$PKG/usr/lib/kitty" "$PKG/usr/bin"
+  cp -a bin lib share "$PKG/usr/lib/kitty/"
+  ln -s ../lib/kitty/bin/kitty  "$PKG/usr/bin/kitty"
+  ln -s ../lib/kitty/bin/kitten "$PKG/usr/bin/kitten"
+  install -Dm644 share/applications/kitty.desktop "$PKG/usr/share/applications/kitty.desktop" 2>/dev/null || true
+  for s in 256x256; do
+    [ -f share/icons/hicolor/$s/apps/kitty.png ] && install -Dm644 share/icons/hicolor/$s/apps/kitty.png "$PKG/usr/share/icons/hicolor/$s/apps/kitty.png"
+  done
+  # терминфо kitty — чтобы ssh/sudo/программы знали TERM=xterm-kitty
+  [ -d share/terminfo ] && { install -dm755 "$PKG/usr/share/terminfo"; cp -a share/terminfo/. "$PKG/usr/share/terminfo/"; }
+  # проверка: каких системных библиотек не хватает
+  miss=$(for f in "$PKG"/usr/lib/kitty/lib/kitty/glfw-x11.so "$PKG"/usr/lib/kitty/lib/kitty/fast_data_types.so "$PKG"/usr/lib/kitty/bin/kitty; do
+           [ -e "$f" ] && LD_LIBRARY_PATH="$PKG/usr/lib/kitty/lib" ldd "$f" | grep 'not found'; done | sort -u)
+  [ -z "$miss" ] || { echo "НЕ ХВАТАЕТ: $miss"; ls "$PKG/usr/lib/kitty/lib" "$PKG/usr/lib/kitty/lib/kitty" | head -50; return 1; }
+}
