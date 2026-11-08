@@ -1,0 +1,9 @@
+name=fetch
+version=2.3.0
+desc="fetch — крутящийся 3D-логотип дистрибутива + сведения о системе (areofyl)"
+url=https://github.com/areofyl/fetch
+source=(fetch-$version.tar.gz::https://github.com/areofyl/fetch/archive/refs/tags/v$version.tar.gz)
+depends=()
+
+build() { make CC=gcc CFLAGS="-O2"; }
+package() { make PREFIX=/usr DESTDIR="$PKG" install; }
