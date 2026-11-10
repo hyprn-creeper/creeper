@@ -47,9 +47,20 @@ class H(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or b"{}")
 
     def do_GET(self):
+        path = self.path.split("?")[0]
+        # открытые сведения о чужом проекте (для `creeper new <страница GitHub>`) — без токена
+        if path == "/repos/pub/tool/releases/latest":
+            return self.send(200, {"tag_name": "v2.5.1"})
+        if path == "/repos/pub/tool":
+            return self.send(200, {"full_name": "pub/tool", "description": "A tool, \"quoted\""})
+        if path == "/repos/pub/tagsonly/releases/latest":
+            return self.send(404, {"message": "Not Found"})
+        if path == "/repos/pub/tagsonly/tags":
+            return self.send(200, [{"name": "release_3_0_2"}])
+        if path == "/repos/pub/tagsonly":
+            return self.send(200, {"full_name": "pub/tagsonly", "description": None})
         if not self.auth():
             return
-        path = self.path.split("?")[0]
         log_calls.append("GET " + path)
         m = re.fullmatch(r"/repos/([^/]+/[^/]+)", path)
         if m:

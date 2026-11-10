@@ -4,10 +4,12 @@
 #   creeper blow <пакет...>      взорвать (удалить)
 #   creeper help                 все команды
 #
-# Рецепты:     /var/lib/creeper/recipes/<пакет>/recipe
-# Установлено: /var/lib/creeper/installed/<пакет>/{version,release,files,dirs,sha256,depends,backup,reason,date,recipe}
+# Рецепты:     /var/lib/creeper/recipes/<пакет>/recipe   (из репозитория, обновляет sync)
+# Свои:        /var/lib/creeper/local/<пакет>/recipe     (главнее; sync их не трогает)
+# Установлено: /var/lib/creeper/installed/<пакет>/{version,release,files,dirs,sha256,depends,backup,reason,date,recipe,hold}
 
-CREEPER_VERSION=0.5
+CREEPER_VERSION=0.6
+SELF=$(readlink -f "$0" 2>/dev/null || echo "$0")
 
 # ROOT пустой = настоящая система. CREEPER_ROOT — только для тестов.
 ROOT=${CREEPER_ROOT:-}
@@ -15,6 +17,7 @@ CONF=$ROOT/etc/creeper.conf
 [ -r "$CONF" ] && . "$CONF"
 
 RECIPES=${RECIPES:-$ROOT/var/lib/creeper/recipes}
+LOCAL=${LOCAL:-$ROOT/var/lib/creeper/local}
 DB=$ROOT/var/lib/creeper/installed
 SUMS=$ROOT/var/lib/creeper/sums
 SOURCES=${SOURCES:-$ROOT/var/cache/creeper/sources}
@@ -44,8 +47,8 @@ MAKEFLAGS="-j$JOBS"
 export MAKEFLAGS JOBS CMAKE_BUILD_PARALLEL_LEVEL=$JOBS
 
 # ---------- оформление ----------
-if [ -t 1 ]; then CG=$'\e[1;32m'; CR=$'\e[1;31m'; CY=$'\e[1;33m'; CB=$'\e[1m'; CN=$'\e[0m'
-else CG=; CR=; CY=; CB=; CN=; fi
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then CG=$'\e[1;32m'; CR=$'\e[1;31m'; CY=$'\e[1;33m'; CB=$'\e[1m'; CD=$'\e[2m'; CN=$'\e[0m'
+else CG=; CR=; CY=; CB=; CD=; CN=; fi
 say()  { printf '%s==>%s %s\n' "$CG" "$CN" "$*"; }
 info() { printf '    %s\n' "$*"; }
 warn() { printf '%s!!>%s %s\n' "$CY" "$CN" "$*" >&2; }
@@ -54,6 +57,8 @@ die()  { printf '%sxx>%s %s\n' "$CR" "$CN" "$*" >&2; exit 1; }
 usage() {
 cat <<EOF
 ${CG}creeper${CN} $CREEPER_VERSION — Ссссс... пакетный менеджер Hyprn LFS
+
+  ${CB}creeper tui${CN}           всё то же самое в окне: список, поиск, установка, свои пакеты
 
  Установка и удаление
   install <пакет...>    поставить вместе с зависимостями
@@ -65,17 +70,32 @@ ${CG}creeper${CN} $CREEPER_VERSION — Ссссс... пакетный менед
       -y                  не спрашивать подтверждение
       --force             даже если от него зависят другие
       --purge             удалить и сохранённые конфиги
-  upgrade               обновить всё, у чего рецепт новее
+  upgrade [пакет...]    обновить всё (или названное), у чего рецепт новее
+  outdated              что обновится (то же: upgrade --dry-run)
   autoremove            взорвать зависимости, которые больше никому не нужны
+  hold / unhold <п>     заморозить: upgrade не трогает пакет / разморозить
+  rollback <п> [верс.]  вернуть прежнюю сборку из кэша (и заморозить)
   fetch <пакет...>      только скачать (потом можно ставить без сети)
 
  Сведения
-  list                  установленные пакеты     orphans   ненужные зависимости
-  search [слово]        доступные рецепты         info <п>  о пакете
-  deps <пакет>          дерево зависимостей       files <п> файлы пакета
-  owns <файл>           чей это файл              log <п>   лог сборки
+  list [--explicit|--deps]  установленные пакеты   orphans   ненужные зависимости
+  search [слово] [--local]  доступные рецепты       info <п>  о пакете
+  deps <пакет>          дерево зависимостей       rdeps <п> кому он нужен
+  files <п>             файлы пакета              owns <файл> чей это файл
+  size [N]              самые большие пакеты      log <п>   лог сборки
   verify [пакет...]     проверить файлы по sha256 (нужен sudo)
+  doctor [--fast]       проверить систему: зависимости, пропавшие библиотеки, рецепты
   history               что ставилось и удалялось
+
+ Свои пакеты
+  new [ссылка]          мастер: по ссылке на архив или GitHub сам определит имя, версию,
+                        способ сборки и зависимости
+      --name --ver --desc --deps "а б" --type способ  -y (без вопросов)
+  edit <п>              править рецепт (правка рецепта из репозитория станет своей копией)
+  cat <п>               показать рецепт           lint <п|файл>  проверить рецепт
+  add <файл>            принять готовый файл рецепта как свой
+  forget <п>            убрать свой рецепт (вернуть рецепт из репозитория)
+  mark explicit|dep <п> нужен мне / только зависимость
 
  Ферма (сборка на GitHub прямо из LFS)
   farm build <п...>     собрать на GitHub, дождаться и поставить
@@ -86,14 +106,15 @@ ${CG}creeper${CN} $CREEPER_VERSION — Ссссс... пакетный менед
   farm token            сохранить токен GitHub (один раз)
 
  Обслуживание
-  sync                  обновить рецепты из репозитория
+  sync                  обновить рецепты из репозитория (свои не трогает)
   self-update           обновить сам creeper из репозитория
   clean [--all]         убрать временные файлы (--all: и старые исходники/бинарники)
-  new <url>             заготовка рецепта по ссылке на исходники
+  completion            автодополнение для bash:  echo '. <(creeper completion)' >> ~/.bashrc
   pack <пакет>          бинарник из установленного пакета
   index                 строки index.txt (для фермы)
 
   Рецепты:   $RECIPES
+  Свои:      $LOCAL
   Бинарники: $BINCACHE
   Репозиторий: ${BINREPO:-не задан}   Потоки сборки: $JOBS
 EOF
@@ -112,8 +133,30 @@ history_add() { mkdir -p "$LOGS" && printf '%s %s\n' "$(date '+%F %T')" "$*" >> 
 # /bin /sbin /lib в LFS — ссылки на /usr/...; храним пути в одном виде
 normalize() { sed -e 's#^/bin/#/usr/bin/#' -e 's#^/sbin/#/usr/sbin/#' -e 's#^/lib/#/usr/lib/#'; }
 
-recipe_file() { echo "$RECIPES/$1/recipe"; }
+# сортировка и сравнение списков — всегда в одной локали (иначе comm врёт после смены LANG)
+csort() { LC_ALL=C sort "$@"; }
+ccomm() { LC_ALL=C comm "$@"; }
+
+# свой рецепт главнее рецепта из репозитория
+is_local()    { [ -r "$LOCAL/$1/recipe" ]; }
+recipe_file() { if [ -r "$LOCAL/$1/recipe" ]; then echo "$LOCAL/$1/recipe"; else echo "$RECIPES/$1/recipe"; fi; }
 have_recipe() { [ -r "$(recipe_file "$1")" ]; }
+all_recipes() { # имена всех рецептов (репозиторий + свои)
+  local d
+  for d in "$RECIPES"/*/ "$LOCAL"/*/; do [ -r "$d/recipe" ] && basename "$d"; done | csort -u
+}
+valid_name()  { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; }
+held()        { [ -e "$DB/$1/hold" ]; }
+outdated()    { # установлен, но в рецепте другая версия/релиз
+  installed "$1" && have_recipe "$1" || return 1
+  [ "$(inst_version "$1")" != "$(meta "$1" version)" ] || [ "$(inst_release "$1")" != "$(pkgrel "$1")" ]
+}
+ask_yn() { # ask_yn "вопрос" [y|n] — без терминала возвращает ответ по умолчанию
+  local a def=${2:-n} hint='[y/N]'; [ "$def" = y ] && hint='[Y/n]'
+  [ -t 0 ] || { [ "$def" = y ]; return; }
+  read -r -p "$1 $hint " a
+  case ${a:-$def} in y|Y|yes|д|Д|да) return 0;; *) return 1;; esac
+}
 installed()   { [ -f "$DB/$1/version" ]; }
 inst_version(){ cat "$DB/$1/version" 2>/dev/null; }
 inst_release(){ cat "$DB/$1/release" 2>/dev/null || echo 1; }
@@ -140,16 +183,19 @@ src_url()  { case $1 in *::*) echo "${1#*::}";; *) echo "$1";; esac; }
 
 # ---------- зависимости ----------
 RESOLVED=(); declare -A SEEN=() VISITING=() TARGET=() METHOD=()
-resolve() { # resolve <пакет> — порядок установки (зависимости раньше)
-  local p=$1 d
+resolve() { # resolve <пакет> [кому нужен] — порядок установки (зависимости раньше)
+  local p=$1 by=${2:-} d
   [ -n "${SEEN[$p]:-}" ] && return 0
-  [ -n "${VISITING[$p]:-}" ] && die "круговая зависимость через $p"
-  have_recipe "$p" || die "нет рецепта '$p' (обнови рецепты: sudo creeper sync)"
+  [ -n "${VISITING[$p]:-}" ] && die "круговая зависимость: $p ↔ ${by:-?}"
+  have_recipe "$p" || die "нет рецепта '$p'${by:+ (он нужен пакету $by)} — обнови рецепты: sudo creeper sync"
   check_recipe "$p"
   VISITING[$p]=1
   for d in $(meta "$p" depends); do
-    installed "$d" && continue
-    resolve "$d"
+    if installed "$d"; then
+      # при upgrade устаревшая зависимость обновляется раньше того, кому она нужна
+      [ -n "${UPGRADE:-}" ] && ! held "$d" && outdated "$d" || continue
+    fi
+    resolve "$d" "$p"
   done
   unset "VISITING[$p]"; SEEN[$p]=1; RESOLVED+=("$p")
 }
@@ -217,19 +263,34 @@ fetch_pkg() { # скачать и проверить все source пакета
   done
 }
 
+# ---------- прерывание (Ctrl+C) ----------
+# фоновая сборка не должна пережить creeper: иначе она продолжит работу и будет держать замок
+STEP_PID=
+kill_tree() { local c kids; kids=$(pgrep -P "$1" 2>/dev/null); kill -TERM "$1" 2>/dev/null; for c in $kids; do kill_tree "$c"; done; }
+on_signal() {
+  trap '' INT TERM HUP
+  [ -n "$STEP_PID" ] && kill_tree "$STEP_PID"
+  [ -n "${UI_ON:-}" ] && ui_end
+  [ -t 2 ] && printf '\r\e[K' >&2
+  warn "прервано"
+  exit 130
+}
+trap on_signal INT TERM HUP
+
 # ---------- сборка ----------
 run_step() { # run_step <пакет> <функция> <лог>
   local p=$1 fn=$2 log=$3 pid rc t0 line
   echo "=== $fn ===" >> "$log"
   (
+    trap - INT QUIT TERM HUP          # у фоновых задач bash глушит Ctrl+C — возвращаем
     set -e -o pipefail
     export LC_ALL=C
     . "$(recipe_file "$p")"
     declare -F "$fn" >/dev/null || exit 0
     cd "$SRCDIR"
     "$fn"
-  ) >> "$log" 2>&1 < /dev/null &
-  pid=$!; t0=$SECONDS
+  ) >> "$log" 2>&1 < /dev/null 9>&- &
+  pid=$!; STEP_PID=$pid; t0=$SECONDS
   if [ -t 1 ]; then
     while kill -0 "$pid" 2>/dev/null; do
       line=$(tail -n 1 "$log" 2>/dev/null | tr -d '\r' | cut -c1-$(( ${COLUMNS:-80} - 22 )))
@@ -238,7 +299,7 @@ run_step() { # run_step <пакет> <функция> <лог>
     done
     printf '\r\e[K'
   fi
-  wait "$pid"; rc=$?
+  wait "$pid"; rc=$?; STEP_PID=
   if [ "$rc" -ne 0 ]; then
     echo; tail -n 25 "$log"
     history_add "FAIL $p ($fn)"
@@ -255,6 +316,16 @@ strip_tree() {
       *ELF*executable*|*ELF*shared\ object*|*ELF*pie\ executable*) strip --strip-unneeded "$f" 2>/dev/null ;;
     esac
   done
+}
+
+qa_tree() { # частые ошибки рецептов — только предупреждения
+  local p=$1 d
+  for d in usr/lib64 usr/local usr/man usr/doc usr/info home root tmp var/tmp; do
+    [ -e "$PKG/$d" ] && warn "$p: файлы попали в /$d — скорее всего ошибка в рецепте (prefix/libdir)"
+  done
+  [ -e "$PKG/lib64" ] && [ ! -L "$PKG/lib64" ] && [ -n "$(find "$PKG/lib64" -type f -print -quit)" ] && \
+    warn "$p: файлы попали в /lib64 — добавь --libdir=/usr/lib"
+  return 0
 }
 
 check_space() {
@@ -294,6 +365,9 @@ build_pkg() {
     case $f in
       *.tar|*.tar.gz|*.tgz|*.tar.xz|*.txz|*.tar.bz2|*.tbz2|*.tar.zst|*.tar.lz)
         tar -xf "$SOURCES/$f" -C "$w/src" || die "не распаковался $f" ;;
+      *.zip)
+        if command -v unzip >/dev/null; then unzip -q "$SOURCES/$f" -d "$w/src"
+        else python3 -m zipfile -e "$SOURCES/$f" "$w/src"; fi || die "не распаковался $f (нужен unzip или python3)" ;;
     esac
   done < <(meta "$p" source)
 
@@ -310,6 +384,7 @@ build_pkg() {
   [ "$(meta "$p" keep_la)" = 1 ] || find "$PKG" -name '*.la' -delete 2>/dev/null   # .la не нужны (keep_la=1 — оставить)
   [ "$CREEPER_STRIP" = 1 ] && strip_tree
   [ -n "$(find "$PKG" -mindepth 1 -print -quit)" ] || die "$p: package() ничего не установил"
+  qa_tree "$p"
 
   mkdir -p "$PKG/.CREEPER"
   cp "$(recipe_file "$p")" "$PKG/.CREEPER/recipe"
@@ -370,18 +445,58 @@ fetch_bin() {
   [ "$got" = "$sum" ] || { rm -f "$BINCACHE/$f"; die "$f: контрольная сумма не совпала — файл удалён, попробуй ещё раз"; }
 }
 
-install_bin() {
-  local p=$1 ver rel f t0=$SECONDS how=$2; ver=$(meta "$p" version); rel=$(pkgrel "$p")
-  f=$BINCACHE/$(binfile "$p" "$ver" "$rel")
-  say "${CB}Ссссс...${CN} ставлю готовый $CB$p-$ver$CN"
-  local w=$WORK/$p; rm -rf "$w"; mkdir -p "$w/pkg"
+install_binfile() { # install_binfile <файл> <пометка для истории> [ожидаемое имя]
+  local f=$1 how=$2 t0=$SECONDS p ver rel w=$WORK/.unpack
+  rm -rf "$w"; mkdir -p "$w/pkg"
   export PKG=$w/pkg
-  tar --zstd -C "$PKG" -xpf "$f" || { rm -rf "$w"; die "$p: бинарник повреждён ($f) — удали его и повтори"; }
-  [ -f "$PKG/.CREEPER/info" ] || { rm -rf "$w"; die "$p: это не пакет creeper ($f)"; }
+  tar --zstd -C "$PKG" -xpf "$f" || { rm -rf "$w"; die "бинарник повреждён ($f) — удали его и повтори"; }
+  [ -f "$PKG/.CREEPER/info" ] || { rm -rf "$w"; die "это не пакет creeper ($f)"; }
+  p=$(sed -n 's/^name=//p' "$PKG/.CREEPER/info"); ver=$(sed -n 's/^version=//p' "$PKG/.CREEPER/info")
+  rel=$(sed -n 's/^release=//p' "$PKG/.CREEPER/info")
+  [ -n "$p" ] && [ -n "$ver" ] || { rm -rf "$w"; die "в бинарнике нет имени/версии ($f)"; }
+  [ -z "${3:-}" ] || [ "$3" = "$p" ] || { rm -rf "$w"; die "в файле ${f##*/} лежит пакет '$p', а не '$3'"; }
+  say "${CB}Ссссс...${CN} ставлю готовый $CB$p-$ver$CN"
   install_tree "$p" "$ver"
-  history_add "install $p-$ver-$rel ($how)"
+  history_add "install $p-$ver-${rel:-1} ($how)"
   say "$CB$p-$ver$CN установлен за $((SECONDS - t0)) с (бинарник)"
   rm -rf "$w"
+}
+install_bin() { install_binfile "$BINCACHE/$(binfile "$1" "$(meta "$1" version)" "$(pkgrel "$1")")" "$2" "$1"; }
+
+# ---------- триггеры: общие кэши системы обновляются один раз в конце ----------
+declare -A TRIG=()
+note_triggers() { # note_triggers <список файлов> — запомнить, какие кэши затронуты
+  local l=$1 d
+  [ -s "$l" ] || return 0
+  grep -q '^/usr/share/fonts/' "$l" && TRIG[fonts]=1
+  grep -q '^/usr/share/glib-2.0/schemas/' "$l" && TRIG[schemas]=1
+  grep -q '^/usr/share/applications/' "$l" && TRIG[desktop]=1
+  grep -q '^/usr/share/mime/packages/' "$l" && TRIG[mime]=1
+  grep -q '^/usr/lib/gdk-pixbuf-2.0/.*/loaders/' "$l" && TRIG[pixbuf]=1
+  grep -q '^/usr/lib/gio/modules/' "$l" && TRIG[gio]=1
+  while IFS= read -r d; do TRIG[icons:$d]=1; done < <(sed -n 's#^/usr/share/icons/\([^/]*\)/.*#\1#p' "$l" | csort -u)
+  while IFS= read -r d; do TRIG[modules:$d]=1; done < <(sed -n 's#^/usr/lib/modules/\([^/]*\)/.*#\1#p' "$l" | csort -u)
+  return 0
+}
+run_triggers() {
+  [ -z "$ROOT" ] && [ ${#TRIG[@]} -gt 0 ] || return 0
+  local k d
+  for k in "${!TRIG[@]}"; do
+    case $k in
+      fonts)   command -v fc-cache >/dev/null && { info "обновляю кэш шрифтов"; fc-cache -s >/dev/null 2>&1; } ;;
+      schemas) command -v glib-compile-schemas >/dev/null && glib-compile-schemas /usr/share/glib-2.0/schemas >/dev/null 2>&1 ;;
+      desktop) command -v update-desktop-database >/dev/null && update-desktop-database -q >/dev/null 2>&1 ;;
+      mime)    command -v update-mime-database >/dev/null && update-mime-database /usr/share/mime >/dev/null 2>&1 ;;
+      pixbuf)  command -v gdk-pixbuf-query-loaders >/dev/null && gdk-pixbuf-query-loaders --update-cache >/dev/null 2>&1 ;;
+      gio)     command -v gio-querymodules >/dev/null && gio-querymodules /usr/lib/gio/modules >/dev/null 2>&1 ;;
+      icons:*) d=/usr/share/icons/${k#icons:}
+               [ -f "$d/index.theme" ] && command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -qtf "$d" >/dev/null 2>&1 ;;
+      modules:*) d=${k#modules:}
+               [ -d "/usr/lib/modules/$d/kernel" ] && command -v depmod >/dev/null && depmod "$d" >/dev/null 2>&1 ;;
+    esac
+  done
+  TRIG=()
+  return 0
 }
 
 install_tree() { # из $PKG в систему
@@ -406,36 +521,39 @@ install_tree() { # из $PKG в систему
 
   { ( cd "$PKG" && find . -mindepth 1 \( -type f -o -type l \) -printf '/%P\n' )
     for b in "${bk[@]}"; do [ -n "$b" ] && [ -e "$ROOT/$b" ] && echo "/$b"; done
-  } | normalize | sort -u > "$tmp/files"
-  ( cd "$PKG" && find . -mindepth 1 -type d -printf '/%P\n' ) | normalize | sort -u > "$tmp/dirs"
+  } | normalize | csort -u > "$tmp/files"
+  ( cd "$PKG" && find . -mindepth 1 -type d -printf '/%P\n' ) | normalize | csort -u > "$tmp/dirs"
   # контрольные суммы файлов (кроме конфигов) — для creeper verify
+  printf '/%s\n' "${bk[@]}" > "$tmp/bk"
   ( cd "$PKG" && find . -type f ! -name '*.creeper-new' -printf '%P\0' | xargs -0 -r sha256sum ) |
     awk '{print substr($0,1,64) "  /" substr($0,67)}' |
-    sed -e 's#  /bin/#  /usr/bin/#' -e 's#  /sbin/#  /usr/sbin/#' -e 's#  /lib/#  /usr/lib/#' > "$tmp/sha256"
-  if [ ${#bk[@]} -gt 0 ]; then
-    local bpat; bpat=$(printf '/%s\n' "${bk[@]}")
-    grep -vF -e "$bpat" "$tmp/sha256" > "$tmp/sha256.f" || true; mv "$tmp/sha256.f" "$tmp/sha256"
-  fi
+    sed -e 's#  /bin/#  /usr/bin/#' -e 's#  /sbin/#  /usr/sbin/#' -e 's#  /lib/#  /usr/lib/#' |
+    awk 'FILENAME==ARGV[1]{b[$0]=1; next} !(substr($0,67) in b)' "$tmp/bk" - > "$tmp/sha256"
 
   # конфликты с другими пакетами
+  owners_index "$p" > "$tmp/owners"
   local conf
-  conf=$(awk -F'\t' 'FILENAME==ARGV[1]{own[$2]=$1; next} ($0 in own){print "    " $0 "  (пакет " own[$0] ")"}' <(owners_index "$p") "$tmp/files")
+  conf=$(awk -F'\t' 'FILENAME==ARGV[1]{own[$2]=$1; next} ($0 in own){print "    " $0 "  (пакет " own[$0] ")"}' "$tmp/owners" "$tmp/files")
   if [ -n "$conf" ]; then
     echo "$conf" | head -n 20 >&2
     [ -n "${FORCE:-}" ] || { rm -rf "$tmp"; die "$p: файлы уже принадлежат другим пакетам (добавь --force, если уверен)"; }
   fi
 
+  # дальше нельзя прерывать: Ctrl+C на середине оставил бы пакет наполовину установленным
+  trap '' INT TERM HUP
   # копирование; --keep-directory-symlink бережёт ссылки /lib -> usr/lib и т.п.
-  tar -C "$PKG" -cpf - . | tar -C "$ROOT/" -xpf - --keep-directory-symlink --no-overwrite-dir \
-    || die "$p: ошибка копирования в систему (часть файлов могла встать — повтори установку)"
+  tar -C "$PKG" -cpf - . | tar -C "$ROOT/" -xpf - --keep-directory-symlink --no-overwrite-dir
+  case "${PIPESTATUS[*]}" in "0 0") ;; *) trap on_signal INT TERM HUP
+    die "$p: ошибка копирования в систему (часть файлов могла встать — повтори установку)";; esac
 
-  # обновление: убрать файлы, которых в новой версии нет
+  # обновление: убрать файлы, которых в новой версии нет (кроме конфигов и файлов других пакетов)
   if [ -f "$DB/$p/files" ]; then
-    local keep; keep=$(printf '/%s\n' "${bk[@]}")
-    comm -23 "$DB/$p/files" "$tmp/files" | { if [ ${#bk[@]} -gt 0 ]; then grep -vxF -e "$keep"; else cat; fi; } |
+    { cat "$tmp/bk"; cut -f2 "$tmp/owners"; } | csort -u > "$tmp/keep"
+    ccomm -23 <(csort -u "$DB/$p/files") "$tmp/files" | ccomm -23 - "$tmp/keep" |
       while IFS= read -r f; do rm -f "$ROOT$f"; done
-    [ -f "$DB/$p/dirs" ] && comm -23 "$DB/$p/dirs" "$tmp/dirs" | sort -r |
+    [ -f "$DB/$p/dirs" ] && ccomm -23 <(csort -u "$DB/$p/dirs") "$tmp/dirs" | csort -r |
       while IFS= read -r f; do protected_dir "$f" || rmdir "$ROOT$f" 2>/dev/null; done
+    note_triggers "$DB/$p/files"
   fi
 
   # кто просил: явно (explicit) или как зависимость (dep); явное не понижаем
@@ -453,7 +571,9 @@ install_tree() { # из $PKG в систему
   date '+%F %R' > "$DB/$p/date"
   cp "$RCP" "$DB/$p/recipe"
   rm -rf "$tmp"
+  note_triggers "$DB/$p/files"
   sync                                   # сразу на диск — зависание не оставит пустых файлов
+  trap on_signal INT TERM HUP
   [ -z "$ROOT" ] && command -v ldconfig >/dev/null && ldconfig
 
   if [ -z "$ROOT" ]; then
@@ -486,12 +606,17 @@ blow_pkg() {
   if [ -z "$ROOT" ]; then
     ( . "$DB/$p/recipe"; declare -F pre_blow >/dev/null || exit 0; cd /; pre_blow ) || true
   fi
+  # файлы, которые есть ещё и у другого пакета (ставили с --force), остаются ему
+  local -A shared=()
+  while IFS= read -r f; do shared[$f]=1; done < <(owners_index "$p" | cut -f2 | csort -u | ccomm -12 - <(csort -u "$DB/$p/files"))
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     if [ -n "${keep[$f]:-}" ]; then info "конфиг $f сохранён"; continue; fi
+    [ -n "${shared[$f]:-}" ] && continue
     rm -f "$ROOT$f" && n=$((n+1))
   done < "$DB/$p/files"
-  sort -r "$DB/$p/dirs" | while IFS= read -r f; do
+  note_triggers "$DB/$p/files"
+  csort -r "$DB/$p/dirs" | while IFS= read -r f; do
     protected_dir "$f" && continue
     rmdir "$ROOT$f" 2>/dev/null
   done
@@ -523,10 +648,11 @@ blow_set() { # blow_set <пакеты...> — порядок: сначала т�
     [ -n "$progress" ] || die "не могу определить порядок удаления (взаимные зависимости?) — используй --force"
   done
   if [ -t 0 ] && [ -z "${YES:-}" ]; then
-    printf '%s будет взорвано:%s %s\nПродолжить? [y/N] ' "$CR" "$CN" "${order[*]}"
-    read -r a; case $a in y|Y|yes|д|Д|да) ;; *) die "отменено";; esac
+    printf '%s будет взорвано:%s %s\n' "$CR" "$CN" "${order[*]}"
+    ask_yn "Продолжить?" n || die "отменено"
   fi
   for a in "${order[@]}"; do blow_pkg "$a"; done
+  run_triggers
 }
 
 # ---------- команды ----------
@@ -543,6 +669,7 @@ run_plan() { # скачать всё, потом установить
     local) install_bin "$a" "бинарник из кэша";;
     remote) install_bin "$a" "бинарник из репозитория";;
     *) build_pkg "$a";; esac; done
+  run_triggers
 }
 
 cmd_install() {
@@ -553,7 +680,8 @@ cmd_install() {
   [ ${#want[@]} -gt 0 ] || die "что ставить? пример: sudo creeper install git"
   need_root install; lock
   for a in "${want[@]}"; do
-    have_recipe "$a" || die "нет рецепта '$a' (поиск: creeper search $a; обновить рецепты: sudo creeper sync)"
+    have_recipe "$a" || die "нет рецепта '$a'$(similar "$a")
+    поиск: creeper search СЛОВО · обновить рецепты: sudo creeper sync · свой пакет: sudo creeper new"
     TARGET[$a]=1
     if installed "$a" && [ -z "${REBUILD:-}${REINSTALL:-}" ] && [ "$(inst_version "$a")" = "$(meta "$a" version)" ] \
        && [ "$(inst_release "$a")" = "$(pkgrel "$a")" ]; then
@@ -564,6 +692,12 @@ cmd_install() {
   done
   [ ${#RESOLVED[@]} -gt 0 ] || return 0
   run_plan "${RESOLVED[@]}"
+}
+
+similar() { # похожие имена рецептов — подсказка при опечатке
+  local q=${1,,} n out=
+  for n in $(all_recipes); do case ${n,,} in *"$q"*) out+=" $n";; esac; done
+  [ -n "$out" ] && echo " — может быть:${out}?"
 }
 
 cmd_blow() {
@@ -612,15 +746,25 @@ cmd_fetch() {
 }
 
 cmd_upgrade() {
+  local -a only=() cand=(); local a d p dry=
+  for a in "$@"; do case $a in
+    -n|--dry-run) dry=1;; --source|-s) SOURCE_ONLY=1;; --force) FORCE=1;;
+    -*) die "неизвестный ключ $a";; *) only+=("$a");; esac; done
+  [ -n "$dry" ] && { cmd_outdated; return 0; }
   need_root upgrade; lock
-  local d p
-  for d in "$DB"/*/; do
-    p=$(basename "$d"); [ -f "$d/version" ] || continue
+  UPGRADE=1
+  if [ ${#only[@]} -gt 0 ]; then
+    for p in "${only[@]}"; do installed "$p" || die "'$p' не установлен"; cand+=("$p"); done
+  else
+    for d in "$DB"/*/; do [ -f "$d/version" ] && cand+=("$(basename "$d")"); done
+  fi
+  for p in "${cand[@]}"; do
     have_recipe "$p" || continue
-    if [ "$(inst_version "$p")" != "$(meta "$p" version)" ] || [ "$(inst_release "$p")" != "$(pkgrel "$p")" ]; then
-      info "$p: $(inst_version "$p")-$(inst_release "$p") → $(meta "$p" version)-$(pkgrel "$p")"
-      resolve "$p"
-    fi
+    outdated "$p" || continue
+    # замороженные пропускаем, если их не назвали явно
+    if held "$p" && [ ${#only[@]} -eq 0 ]; then info "$p: заморожен — пропускаю (sudo creeper unhold $p)"; continue; fi
+    info "$p: $(inst_version "$p")-$(inst_release "$p") → $(meta "$p" version)-$(pkgrel "$p")"
+    resolve "$p"
   done
   [ ${#RESOLVED[@]} -gt 0 ] || { say "всё свежее"; return 0; }
   run_plan "${RESOLVED[@]}"
@@ -671,6 +815,15 @@ cmd_sync() {
   cp -r "$t"/recipes/* "$RECIPES/"
   say "рецепты: всего $(ls "$t/recipes" | wc -l), новых $new, изменённых $changed"
   rm -rf "$t"
+  # свои рецепты sync не трогает; совпавший с репозиторием больше не нужен
+  for r in "$LOCAL"/*/; do
+    n=$(basename "$r"); [ -f "$r/recipe" ] && [ -f "$RECIPES/$n/recipe" ] || continue
+    if cmp -s "$r/recipe" "$RECIPES/$n/recipe"; then
+      rm -rf "${LOCAL:?}/$n"; info "$n: твой рецепт теперь есть в репозитории — берётся оттуда"
+    elif [ "$(meta_f "$r/recipe" version)-$(meta_f "$r/recipe" release)" != "$(meta_f "$RECIPES/$n/recipe" version)-$(meta_f "$RECIPES/$n/recipe" release)" ]; then
+      info "$n: действует твой рецепт ($(meta_f "$r/recipe" version)), в репозитории $(meta_f "$RECIPES/$n/recipe" version) — взять из репозитория: sudo creeper forget $n"
+    fi
+  done
   load_index && [ -s "$INDEX" ] && info "бинарников в репозитории: $(wc -l < "$INDEX")"
   # есть ли новый creeper?
   local v; v=$(curl -fsSL --connect-timeout 10 "$BINREPO/creeper.version" 2>/dev/null | awk '{print $1}')
@@ -681,9 +834,10 @@ cmd_sync() {
 
 cmd_upgrade_list() {
   local d p out=
+  META_CACHE=; load_meta || return 0
   for d in "$DB"/*/; do
-    p=$(basename "$d"); [ -f "$d/version" ] && have_recipe "$p" || continue
-    if [ "$(inst_version "$p")" != "$(meta "$p" version)" ] || [ "$(inst_release "$p")" != "$(pkgrel "$p")" ]; then out+="$p "; fi
+    p=$(basename "$d"); [ -f "$d/version" ] && [ -n "${MV[$p]:-}" ] && [ ! -e "$d/hold" ] || continue
+    if [ "$(inst_version "$p")" != "${MV[$p]}" ] || [ "$(inst_release "$p")" != "${MR[$p]}" ]; then out+="$p "; fi
   done
   echo "$out"
 }
@@ -781,43 +935,660 @@ cmd_log() {
 
 cmd_history() { [ -f "$HISTORY" ] && tail -n "${1:-40}" "$HISTORY" || info "история пуста"; }
 
-cmd_new() {
-  local url=${1:?укажи ссылку на архив исходников} f base n v dir out
-  f=$(basename "${url%%\?*}")
-  base=${f%.tar.*}; base=${base%.tgz}; base=${base%.tar}
-  n=$(echo "$base" | sed -E 's/[-_]v?[0-9][0-9a-zA-Z.]*$//' | tr 'A-Z' 'a-z')
-  v=$(echo "$base" | sed -E 's/^.*[-_]v?([0-9][0-9a-zA-Z.]*)$/\1/')
-  [ -n "$n" ] && [ "$v" != "$base" ] || die "не понял имя/версию из '$f' — назови файл по образцу name-1.2.3.tar.xz"
-  dir=${RECIPES_OUT:-.}/$n; out=$dir/recipe
-  [ -e "$out" ] && die "$out уже есть"
-  mkdir -p "$dir"
-  local u=${url//$v/\$version}
-  cat > "$out" <<EOF
-name=$n
-version=$v
-desc="ОПИСАНИЕ"
-url=
-source=($u)
-depends=()
-# backup=(etc/$n.conf)      # конфиги, которые не надо затирать при обновлении
+# ---------- кэш сведений о рецептах (быстрый search, outdated и TUI) ----------
+SEP=$'\x1f'      # разделитель полей (не пробельный — пустые поля не слипаются)
+META_CACHE=
+meta_cache() { # → $META_CACHE: имя␟версия␟релиз␟свой(0/1)␟зависимости␟описание
+  [ -n "$META_CACHE" ] && [ -s "$META_CACHE" ] && return 0
+  local sys=$ROOT/var/cache/creeper/meta-v1 mine c tmp __n __f __loc
+  mine=${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/creeper-meta-v1${ROOT//\//_}
+  for c in "$sys" "$mine"; do
+    if [ -s "$c" ] && [ -z "$(find "$RECIPES" "$LOCAL" -maxdepth 2 -newer "$c" -print -quit 2>/dev/null)" ]; then
+      META_CACHE=$c; return 0
+    fi
+  done
+  c=$sys
+  if ! { mkdir -p "${c%/*}" 2>/dev/null && [ -w "${c%/*}" ]; }; then c=$mine; mkdir -p "${c%/*}" 2>/dev/null; fi
+  tmp=$(mktemp "$c.XXXXXX" 2>/dev/null) || tmp=$(mktemp) || return 1
+  for __n in $(all_recipes); do
+    __f=$(recipe_file "$__n"); __loc=0; is_local "$__n" && __loc=1
+    ( if . "$__f" >/dev/null 2>&1; then
+        __d=${desc:-}; __d=${__d//[$'\t\n\x1f']/ }
+        printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$__n" "${version:-?}" "${release:-1}" "$__loc" "${depends[*]:-}" "$__d"
+      else
+        printf '%s\x1f?\x1f1\x1f%s\x1f\x1f%s\n' "$__n" "$__loc" "ОШИБКА В РЕЦЕПТЕ (creeper lint $__n)"
+      fi )
+  done > "$tmp"
+  chmod 644 "$tmp" 2>/dev/null
+  if mv "$tmp" "$c" 2>/dev/null; then META_CACHE=$c; else META_CACHE=$tmp; fi
+}
 
+declare -A MV=() MR=() MLOC=() MDEP=() MDESC=()
+MNAMES=()
+load_meta() { # кэш → массивы (один проход, без запуска рецептов)
+  local n v r l d s
+  meta_cache || return 1
+  MV=(); MR=(); MLOC=(); MDEP=(); MDESC=(); MNAMES=()
+  while IFS=$SEP read -r n v r l d s; do
+    [ -n "$n" ] || continue
+    MNAMES+=("$n"); MV[$n]=$v; MR[$n]=$r; MLOC[$n]=$l; MDEP[$n]=$d; MDESC[$n]=$s
+  done < "$META_CACHE"
+}
+
+# ---------- сведения ----------
+cmd_outdated() {
+  local d p n=0 note v r
+  load_meta
+  for d in "$DB"/*/; do
+    p=$(basename "$d"); [ -f "$d/version" ] || continue
+    [ -n "${MV[$p]:-}" ] || continue
+    v=$(inst_version "$p"); r=$(inst_release "$p")
+    [ "$v" != "${MV[$p]}" ] || [ "$r" != "${MR[$p]}" ] || continue
+    note=; held "$p" && note="  ${CY}(заморожен)${CN}"
+    printf '%-20s %s → %s%s\n' "$p" "$v-$r" "${MV[$p]}-${MR[$p]}" "$note"; n=$((n+1))
+  done
+  [ $n -gt 0 ] && info "обновить: sudo creeper upgrade" || info "всё свежее"
+  return 0
+}
+
+cmd_rdeps() {
+  local p=${1:?укажи пакет} r
+  installed "$p" || die "'$p' не установлен"
+  r=$(rdeps "$p")
+  if [ -n "$r" ]; then echo "$r"; else info "от $p никто не зависит ($(cat "$DB/$p/reason" 2>/dev/null || echo explicit))"; fi
+}
+
+cmd_size() {
+  local n=${1:-20} d p
+  [[ $n =~ ^[0-9]+$ ]] || die "creeper size [сколько строк]"
+  for d in "$DB"/*/; do
+    p=$(basename "$d"); [ -f "$d/files" ] || continue
+    printf '%s %s\n' "$(sed "s|^|$ROOT|" "$d/files" | xargs -d '\n' -r stat -c %s 2>/dev/null | awk '{s+=$1} END{print s+0}')" "$p"
+  done | LC_ALL=C sort -rn | awk -v n="$n" '
+    {t+=$1; if (NR<=n) printf "%9.1f МБ  %s\n", $1/1048576, $2}
+    END{printf "%9.1f МБ  всего в %d пакетах\n", t/1048576, NR}'
+}
+
+cmd_cat() {
+  local p=${1:?укажи пакет} f
+  if have_recipe "$p"; then f=$(recipe_file "$p"); elif installed "$p"; then f=$DB/$p/recipe; else die "нет рецепта '$p'"; fi
+  [ -t 1 ] && printf '%s# %s%s\n' "$CD" "$f" "$CN"
+  cat "$f"
+}
+
+cmd_mark() {
+  local how=${1:-} p; [ $# -gt 0 ] && shift
+  case $how in explicit|dep) ;; *) die "creeper mark explicit|dep <пакет...>  (explicit — нужен мне, dep — только как зависимость)";; esac
+  [ $# -gt 0 ] || die "какой пакет?"
+  need_root mark
+  for p in "$@"; do
+    installed "$p" || die "'$p' не установлен"
+    echo "$how" > "$DB/$p/reason"; info "$p: $how"
+  done
+}
+
+cmd_hold() {
+  local on=$1 p; shift
+  if [ $# -eq 0 ]; then
+    for p in "$DB"/*/hold; do [ -e "$p" ] && basename "$(dirname "$p")"; done
+    return 0
+  fi
+  need_root hold
+  for p in "$@"; do
+    installed "$p" || die "'$p' не установлен"
+    if [ "$on" = 1 ]; then : > "$DB/$p/hold"; info "$p заморожен — upgrade его пропускает (снять: sudo creeper unhold $p)"
+    else rm -f "$DB/$p/hold"; info "$p разморожен"; fi
+  done
+}
+
+bin_info() { tar --zstd -xOf "$1" --wildcards '*.CREEPER/info' 2>/dev/null; }
+
+cmd_rollback() {
+  local p=${1:-} want=${2:-} f cur inf v r i pick
+  [ -n "$p" ] || die "какой пакет откатить? пример: sudo creeper rollback mesa"
+  need_root rollback; lock
+  installed "$p" || die "'$p' не установлен"
+  cur=$(binfile "$p" "$(inst_version "$p")" "$(inst_release "$p")")
+  local -a cand=() label=()
+  while IFS= read -r f; do
+    [ "${f##*/}" = "$cur" ] && continue
+    inf=$(bin_info "$f") || continue
+    [ "$(echo "$inf" | sed -n 's/^name=//p')" = "$p" ] || continue
+    v=$(echo "$inf" | sed -n 's/^version=//p'); r=$(echo "$inf" | sed -n 's/^release=//p')
+    if [ -n "$want" ] && [ "$want" != "$v" ] && [ "$want" != "$v-$r" ]; then continue; fi
+    cand+=("$f"); label+=("$v-$r  (собран $(echo "$inf" | sed -n 's/^built=//p'))")
+  done < <(ls -t "$BINCACHE/$p"-*.tar.zst 2>/dev/null)
+  [ ${#cand[@]} -gt 0 ] || die "в кэше нет ${want:+версии $want }других сборок $p (сейчас стоит $(inst_version "$p")-$(inst_release "$p"); старые сборки удаляет clean --all)"
+  pick=0
+  if [ ${#cand[@]} -gt 1 ] && [ -t 0 ]; then
+    for i in "${!cand[@]}"; do printf '  %d) %s\n' $((i+1)) "${label[$i]}"; done
+    read -r -p "На какую откатить? [1] " i; i=${i:-1}
+    [[ $i =~ ^[0-9]+$ ]] && [ "$i" -ge 1 ] && [ "$i" -le ${#cand[@]} ] || die "отменено"
+    pick=$((i-1))
+  fi
+  install_binfile "${cand[$pick]}" "откат" "$p"
+  : > "$DB/$p/hold"
+  run_triggers
+  info "$p заморожен, чтобы upgrade не обновил его обратно (снять: sudo creeper unhold $p)"
+}
+
+# ---------- проверка системы ----------
+cmd_doctor() {
+  local d p x bad=0 n out f libs=1
+  [ "${1:-}" = --fast ] && libs=
+  say "проверяю базу пакетов"
+  # 1. зависимости установленных пакетов
+  out=
+  for d in "$DB"/*/; do
+    p=$(basename "$d"); [ -f "$d/version" ] || continue
+    [ -f "$d/files" ] || { out+="    $p: нет списка файлов (переставь: sudo creeper install --reinstall $p)"$'\n'; continue; }
+    while IFS= read -r x; do
+      [ -n "$x" ] && ! installed "$x" && out+="    $p требует $x, а он не установлен (sudo creeper install $x)"$'\n'
+    done < "$d/depends"
+  done
+  if [ -n "$out" ]; then bad=$((bad+1)); warn "нарушены зависимости:"; printf '%s' "$out"; fi
+
+  # 2. файлы, которые числятся сразу за двумя пакетами
+  out=$(owners_index "" | LC_ALL=C sort -t$'\t' -k2 | awk -F'\t' '$2==prev{print "    " $2 "  (" pp ", " $1 ")"} {prev=$2; pp=$1}' | head -n 15)
+  if [ -n "$out" ]; then bad=$((bad+1)); warn "файлы числятся за несколькими пакетами:"; echo "$out"; fi
+
+  # 3. рецепты с ошибками
+  out=
+  for p in $(all_recipes); do bash -n "$(recipe_file "$p")" 2>/dev/null || out+=" $p"; done
+  if [ -n "$out" ]; then bad=$((bad+1)); warn "рецепты с ошибками синтаксиса:$out"; fi
+
+  # 4. программы, которым не хватает библиотек
+  if [ -n "$libs" ] && [ -z "$ROOT" ] && [ -x /usr/lib/ld-linux-x86-64.so.2 ]; then
+    say "ищу программы, которым не хватает библиотек (быстрее: creeper doctor --fast)"
+    out=; n=0
+    for d in "$DB"/*/; do
+      p=$(basename "$d"); [ -f "$d/files" ] || continue
+      [ -t 1 ] && printf '\r    %s\e[K' "$p"
+      while IFS= read -r f; do
+        [ -f "$f" ] && [ ! -L "$f" ] || continue
+        x=$(/usr/lib/ld-linux-x86-64.so.2 --list "$f" 2>/dev/null | awk '/=> not found/{print $1}' | sort -u | tr '\n' ' ')
+        [ -n "$x" ] && { out+="    $f ($p): нет $x"$'\n'; n=$((n+1)); }
+      done < <(grep -E '^/usr/(s?bin|libexec)/|^/usr/lib/[^/]*\.so[^/]*$' "$d/files")
+    done
+    [ -t 1 ] && printf '\r\e[K'
+    if [ -n "$out" ]; then bad=$((bad+1)); warn "не хватает библиотек ($n файлов):"; printf '%s' "$out" | head -n 30; fi
+  fi
+
+  # 5. мелочи — не ошибки
+  x=$(orphans | tr '\n' ' '); [ -n "$x" ] && info "ненужные зависимости: $x(sudo creeper autoremove)"
+  n=0; for d in "$DB"/*/; do p=$(basename "$d"); [ -f "$d/version" ] && outdated "$p" && n=$((n+1)); done
+  [ $n -gt 0 ] && info "можно обновить пакетов: $n (creeper outdated)"
+  x=$(for d in "$DB"/*/; do [ -f "$d/files" ] && grep -h '\.creeper-new$' "$d/files"; done | while IFS= read -r f; do [ -e "$ROOT$f" ] && echo "$f"; done | tr '\n' ' ')
+  [ -n "$x" ] && info "новые версии конфигов лежат рядом со старыми: $x"
+  x=$(for p in "$DB"/*/hold; do [ -e "$p" ] && basename "$(dirname "$p")"; done | tr '\n' ' ')
+  [ -n "$x" ] && info "заморожены: $x"
+  x=$(df -Pm "$ROOT/" 2>/dev/null | awk 'NR==2{print $4}')
+  [ -n "$x" ] && [ "$x" -lt "$CREEPER_MINFREE_MB" ] && info "мало места: свободно $x МБ (sudo creeper clean --all)"
+  x=$(du -sm "$SOURCES" "$BINCACHE" "$WORK" 2>/dev/null | awk '{s+=$1} END{print s+0}')
+  [ "$x" -gt 2000 ] && info "кэш creeper занимает $x МБ (sudo creeper clean --all)"
+
+  if [ $bad -eq 0 ]; then say "система в порядке"; else warn "найдено проблем: $bad"; return 1; fi
+}
+
+# ---------- свои пакеты ----------
+editor() { local e=${VISUAL:-${EDITOR:-}}; [ -n "$e" ] || e=$(command -v nano || command -v vim || command -v vi); echo "$e"; }
+
+lint_file() { # lint_file <файл> [имя каталога] — 0, если ошибок нет (предупреждения не в счёт)
+  local f=$1 dn=${2:-} e=0 w=0 n v x nsrc nsum
+  local -a a
+  E() { e=$((e+1)); printf '  %sошибка:%s %s\n' "$CR" "$CN" "$*"; }
+  W() { w=$((w+1)); printf '  %sзамечание:%s %s\n' "$CY" "$CN" "$*"; }
+  if ! x=$(bash -n "$f" 2>&1); then E "синтаксис bash: ${x#*: }"; return 1; fi
+  n=$(meta_f "$f" name); v=$(meta_f "$f" version)
+  if [ -z "$n" ]; then E "нет name="; else
+    valid_name "$n" || E "имя '$n': можно только буквы, цифры и . _ + -"
+    [ -n "$dn" ] && [ "$n" != "$dn" ] && E "name=$n, а каталог рецепта называется $dn"
+  fi
+  if [ -z "$v" ]; then E "нет version="; else case $v in *[[:space:]/]*) E "в version не должно быть пробелов и /";; esac; fi
+  x=$(meta_f "$f" desc); { [ -z "$x" ] || [ "$x" = "ОПИСАНИЕ" ]; } && W "нет описания (desc=)"
+  ( . "$f" >/dev/null 2>&1; declare -F package >/dev/null ) || E "нет функции package() — нечем ставить файлы в \$PKG"
+  mapfile -t a < <(meta_f "$f" source); nsrc=0
+  for x in "${a[@]}"; do
+    [ -n "$x" ] || continue; nsrc=$((nsrc+1))
+    case $(src_url "$x") in http://*|https://*|ftp://*|file://*) ;; *) W "источник '$x' — не ссылка";; esac
+    [[ $(src_name "$x") =~ ^[vV]?[0-9][0-9._-]*\.(tar\.[a-z0-9]+|tgz|zip)$ ]] && \
+      E "файл исходников '$(src_name "$x")' назван слишком общо и совпадёт с чужим — пиши: $n-\$version.tar.gz::ссылка"
+  done
+  mapfile -t a < <(meta_f "$f" sha256); nsum=0; for x in "${a[@]}"; do [ -n "$x" ] && nsum=$((nsum+1)); done
+  [ "$nsum" -gt "$nsrc" ] && W "sha256: $nsum сумм на $nsrc источников (порядок должен совпадать; SKIP — не проверять)"
+  for x in $(meta_f "$f" depends); do
+    [ "$x" = "$n" ] && { E "пакет зависит сам от себя"; continue; }
+    have_recipe "$x" || installed "$x" || W "зависимость '$x': такого рецепта нет (если это часть базовой LFS — убери из depends)"
+  done
+  if [ $e -gt 0 ]; then printf '  итог: ошибок %d, замечаний %d\n' "$e" "$w"; return 1; fi
+  [ $w -gt 0 ] && printf '  итог: замечаний %d\n' "$w"
+  return 0
+}
+
+cmd_lint() {
+  local a f rc=0
+  [ $# -gt 0 ] || die "что проверить? пример: creeper lint htop  (или путь к файлу recipe)"
+  for a in "$@"; do
+    if [ -f "$a" ]; then f=$a; lint_file "$f" || rc=1
+    elif have_recipe "$a"; then f=$(recipe_file "$a"); lint_file "$f" "$a" || rc=1
+    else die "не нашёл рецепт '$a'"; fi
+    [ $rc -eq 0 ] && info "$a: рецепт в порядке"
+  done
+  return $rc
+}
+
+cmd_add() { # принять готовый файл рецепта как свой
+  local f=${1:-} n
+  [ -f "$f" ] || die "укажи файл рецепта: sudo creeper add ./recipe"
+  need_root add
+  lint_file "$f" || die "$f: рецепт с ошибками — не добавляю"
+  n=$(meta_f "$f" name)
+  mkdir -p "$LOCAL/$n" && cp "$f" "$LOCAL/$n/recipe" && chmod 644 "$LOCAL/$n/recipe" || die "не записалось в $LOCAL/$n"
+  history_add "recipe $n-$(meta_f "$f" version) (свой)"
+  say "свой рецепт $n: $LOCAL/$n/recipe"
+}
+
+cmd_edit() {
+  local p=${1:-} ed f before
+  [ -n "$p" ] || die "какой рецепт править? пример: sudo creeper edit dwm"
+  need_root edit
+  have_recipe "$p" || die "нет рецепта '$p' (создать новый: sudo creeper new)"
+  ed=$(editor); [ -n "$ed" ] || die "не нашёл редактор — задай EDITOR=nano"
+  if ! is_local "$p"; then mkdir -p "$LOCAL/$p"; cp "$RECIPES/$p/recipe" "$LOCAL/$p/recipe"; fi
+  f=$LOCAL/$p/recipe; before=$(sha256sum "$f")
+  $ed "$f"
+  if [ -f "$RECIPES/$p/recipe" ] && cmp -s "$f" "$RECIPES/$p/recipe"; then
+    rm -rf "${LOCAL:?}/$p"; info "рецепт не отличается от репозитория — своей копии нет"; return 0
+  fi
+  [ "$before" = "$(sha256sum "$f")" ] && { info "без изменений"; return 0; }
+  lint_file "$f" "$p" || warn "исправь ошибки: sudo creeper edit $p"
+  say "свой рецепт $p сохранён (вернуть как в репозитории: sudo creeper forget $p)"
+  if installed "$p"; then
+    if outdated "$p"; then info "применить: sudo creeper upgrade $p"
+    else info "версия та же — чтобы пересобрать, подними release= или: sudo creeper install --rebuild $p"; fi
+  fi
+}
+
+cmd_forget() {
+  local p
+  [ $# -gt 0 ] || die "какой свой рецепт убрать? (список: creeper search --local)"
+  need_root forget
+  for p in "$@"; do
+    is_local "$p" || die "у '$p' нет своего рецепта"
+    rm -rf "${LOCAL:?}/$p"
+    if [ -r "$RECIPES/$p/recipe" ]; then info "$p: свой рецепт убран, действует рецепт из репозитория"
+    else info "$p: свой рецепт убран$(installed "$p" && echo " (сам пакет остался установлен)")"; fi
+  done
+}
+
+# --- мастер нового пакета ---
+NEW_NAME=; NEW_VER=; NEW_DESC=; NEW_HOME=; NEW_DL=; NEW_FILE=; NEW_SRC=; NEW_SHA=; NEW_TYPE=; NEW_DEPS=; NEW_MISS=; NEW_NOTE=
+NEW_TYPES="autotools autoreconf meson cmake make cargo go python file custom"
+
+GH_TAG=; GH_DESC=
+gh_latest() { # gh_latest владелец/репо → GH_TAG (последний релиз, иначе последний тег), GH_DESC
+  local j py='import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d=None
+k=sys.argv[1]
+if isinstance(d,list): d=d[0] if d else {}
+print(((d or {}).get(k) or "").replace("\n"," "))'
+  GH_TAG=; GH_DESC=
+  command -v curl >/dev/null && command -v python3 >/dev/null || return 1
+  j=$(curl -fsSL --connect-timeout 15 "$FARM_API/repos/$1/releases/latest" 2>/dev/null) && GH_TAG=$(printf '%s' "$j" | python3 -c "$py" tag_name)
+  if [ -z "$GH_TAG" ]; then
+    j=$(curl -fsSL --connect-timeout 15 "$FARM_API/repos/$1/tags?per_page=1" 2>/dev/null) && GH_TAG=$(printf '%s' "$j" | python3 -c "$py" name)
+  fi
+  j=$(curl -fsSL --connect-timeout 15 "$FARM_API/repos/$1" 2>/dev/null) && GH_DESC=$(printf '%s' "$j" | python3 -c "$py" description)
+  [ -n "$GH_TAG" ]
+}
+
+tag_version() { # тег → версия: v1.2.3, foo-1.2.3, release_1_2_3 → 1.2.3
+  local t=$1 v
+  v=$(printf '%s' "$t" | sed -E 's/^[^0-9]*//')
+  [ -n "$v" ] || { echo "$t"; return; }
+  case $v in *_*) case $v in *.*) ;; *) v=${v//_/.};; esac;; esac
+  echo "$v"
+}
+
+new_srcline() { # NEW_DL NEW_FILE NEW_VER → NEW_SRC (с $version вместо номера)
+  local u=$NEW_DL fn=$NEW_FILE
+  if [ -n "$NEW_VER" ]; then u=${u//"$NEW_VER"/\$version}; fn=${fn//"$NEW_VER"/\$version}; fi
+  if [ "$(basename "${NEW_DL%%\?*}")" = "$NEW_FILE" ]; then NEW_SRC=$u; else NEW_SRC="$fn::$u"; fi
+}
+
+new_parse_url() { # ссылка → NEW_NAME NEW_VER NEW_DL NEW_FILE NEW_HOME (NEW_DESC с GitHub)
+  local url=$1 o r tag ext f base n v
+  url=${url%/}; url=${url%.git}
+  case $url in github:*) url=https://github.com/${url#github:};; esac
+  if [[ $url =~ ^https?://github\.com/([^/]+)/([^/]+)$ ]]; then
+    o=${BASH_REMATCH[1]}; r=${BASH_REMATCH[2]}
+    info "узнаю последнюю версию $o/$r на GitHub"
+    gh_latest "$o/$r" || die "не узнал последнюю версию $o/$r (нет релизов и тегов или нет сети) — дай прямую ссылку на архив"
+    NEW_HOME=https://github.com/$o/$r; [ -n "$NEW_DESC" ] || NEW_DESC=$GH_DESC
+    NEW_NAME=${r,,}; NEW_VER=$(tag_version "$GH_TAG")
+    NEW_DL=https://github.com/$o/$r/archive/refs/tags/$GH_TAG.tar.gz; NEW_FILE=$NEW_NAME-$NEW_VER.tar.gz
+  elif [[ $url =~ ^https?://github\.com/([^/]+)/([^/]+)/archive/(refs/tags/)?(.+)\.(tar\.gz|tar\.xz|tgz|zip)$ ]]; then
+    o=${BASH_REMATCH[1]}; r=${BASH_REMATCH[2]}; tag=${BASH_REMATCH[4]}; ext=${BASH_REMATCH[5]}
+    NEW_HOME=https://github.com/$o/$r
+    NEW_NAME=${r,,}; NEW_VER=$(tag_version "$tag"); NEW_DL=$url; NEW_FILE=$NEW_NAME-$NEW_VER.$ext
+  else
+    f=$(basename "${url%%\?*}")
+    base=${f%.tar.*}; base=${base%.tgz}; base=${base%.txz}; base=${base%.tbz2}; base=${base%.zip}; base=${base%.tar}
+    n=$(echo "$base" | sed -E 's/[-_]v?[0-9][0-9a-zA-Z.]*$//' | tr 'A-Z' 'a-z')
+    v=$(echo "$base" | sed -E 's/^.*[-_]v?([0-9][0-9a-zA-Z.]*)$/\1/')
+    if [ -n "$n" ] && [ "$v" != "$base" ]; then NEW_NAME=$n; NEW_VER=$v; fi
+    NEW_DL=$url; NEW_FILE=$f
+    [[ $url =~ ^(https?://github\.com/[^/]+/[^/]+)/ ]] && NEW_HOME=${BASH_REMATCH[1]}
+  fi
+  new_srcline
+}
+
+detect_build() { # каталог исходников → способ сборки
+  local d=$1
+  if   [ -f "$d/meson.build" ]; then echo meson
+  elif [ -f "$d/CMakeLists.txt" ]; then echo cmake
+  elif [ -f "$d/configure" ]; then echo autotools
+  elif [ -f "$d/configure.ac" ] || [ -f "$d/configure.in" ] || [ -f "$d/autogen.sh" ]; then echo autoreconf
+  elif [ -f "$d/Cargo.toml" ]; then echo cargo
+  elif [ -f "$d/go.mod" ]; then echo go
+  elif [ -f "$d/pyproject.toml" ] || [ -f "$d/setup.py" ]; then echo python
+  elif [ -f "$d/Makefile" ] || [ -f "$d/makefile" ] || [ -f "$d/GNUmakefile" ]; then echo make
+  else echo custom; fi
+}
+
+new_deps() { # new_deps <каталог> — библиотеки, которые ищет сборка → NEW_DEPS (пакеты), NEW_MISS (не нашлись)
+  local top=$1 mods m c pkg own r
+  local -A lc=() got=()
+  mods=$( {
+    find "$top" -maxdepth 3 -name meson.build -exec grep -ohE "dependency\([[:space:]]*'[^']+'" {} + 2>/dev/null | sed -E "s/.*'([^']+)'/\1/"
+    find "$top" -maxdepth 2 \( -name configure.ac -o -name configure.in \) -exec cat {} + 2>/dev/null | tr '\n' ' ' |
+      grep -oE 'PKG_CHECK_MODULES\(\[?[A-Za-z0-9_]+\]?,[^)]+' | sed -E 's/^[^,]+,//' | tr ' ,[]' '\n\n\n\n'
+    find "$top" -maxdepth 2 -name CMakeLists.txt -exec cat {} + 2>/dev/null | tr '\n' ' ' |
+      grep -oiE 'pkg_check_modules\([^)]*\)' | sed -E 's/^[^(]*\([[:space:]]*[A-Za-z0-9_]+//; s/\)$//' | tr ' \t' '\n\n' |
+      grep -vE '^(REQUIRED|QUIET|IMPORTED_TARGET|GLOBAL|NO_CMAKE_PATH|NO_CMAKE_ENVIRONMENT_PATH)$' | sed -E 's/[<>=].*//'
+    cat "$top"/Makefile "$top"/makefile "$top"/GNUmakefile "$top"/config.mk 2>/dev/null |
+      grep -oE 'pkg-config[^)`|;&]*' | tr ' \t' '\n\n' | grep -v '^pkg-config$'
+  } | grep -E '^[A-Za-z][A-Za-z0-9+._-]*$' | grep -vxE 'threads|dl|m|rt|openmp|intl|iconv|appleframeworks' | csort -u )
+  NEW_DEPS=; NEW_MISS=
+  [ -n "$mods" ] || return 0
+  for r in $(all_recipes); do lc[${r,,}]=$r; done
+  own=$(owners_index "" | grep -E $'\t''/usr/(lib|share)/pkgconfig/[^/]+\.pc$')
+  for m in $mods; do
+    pkg=$(printf '%s\n' "$own" | awk -F'\t' -v a="/usr/lib/pkgconfig/$m.pc" -v b="/usr/share/pkgconfig/$m.pc" '$2==a||$2==b{print $1; exit}')
+    if [ -z "$pkg" ]; then
+      c=${m,,}
+      case $c in      # имена pkg-config, которые не похожи на имя пакета
+        gtk+-3.0|gtk+-x11-3.0|gdk-3.0|gail-3.0) c=gtk3 ;;
+        gio-2.0|gio-unix-2.0|gobject-2.0|gmodule-2.0|gthread-2.0) c=glib ;;
+        alsa) c=alsa-lib ;;                    libpulse*) c=pulseaudio ;;
+        gl|egl|gbm|glx|opengl|glesv2|dri) c=mesa ;;   wayland-client|wayland-server|wayland-cursor|wayland-egl|wayland-scanner) c=wayland ;;
+        xcb-proto) ;;
+        xcb-image) c=xcb-util-image ;;         xcb-renderutil) c=xcb-util-renderutil ;;
+        xcb-util|xcb-aux|xcb-atom|xcb-event) c=xcb-util ;;   xcb-*|x11-xcb) c=libxcb ;;
+        pangocairo|pangoft2|pangoxft) c=pango ;;   cairo-*) c=cairo ;;
+        libjpeg|libturbojpeg) c=libjpeg-turbo ;;   libxml-2.0) c=libxml2 ;;   libpcre2-*) c=pcre2 ;;
+        atk|atspi-2|atk-bridge-2.0) c=at-spi2-core ;;   libpci) c=pciutils ;;   cups|libcups) c=cups-libs ;;
+        lua5.2|lua-5.2|lua52) c=lua52 ;;       libav*|libsw*|libpostproc) c=ffmpeg ;;
+        *proto) [ "$c" = xcb-proto ] || c=xorgproto ;;
+      esac
+      for c in "$c" "lib$c" "${c%-[0-9]*}" "lib${c%-[0-9]*}" "${c%%[0-9]*}" "lib${c%%[0-9]*}" "${c#lib}"; do
+        [ -n "$c" ] && [ -n "${lc[$c]:-}" ] && { pkg=${lc[$c]}; break; }
+      done
+    fi
+    if [ -z "$pkg" ]; then
+      command -v pkg-config >/dev/null && pkg-config --exists "$m" 2>/dev/null && continue    # есть в базовой LFS
+      NEW_MISS+="$m "; continue
+    fi
+    [ "$pkg" = "$NEW_NAME" ] || got[$pkg]=1
+  done
+  NEW_DEPS=$(printf '%s\n' "${!got[@]}" | csort | tr '\n' ' '); NEW_DEPS=${NEW_DEPS% }; NEW_DEPS=${NEW_DEPS# }
+  NEW_MISS=${NEW_MISS% }
+}
+
+new_analyze() { # new_analyze <ссылка> [nodl] — разобрать ссылку, скачать, изучить исходники → NEW_*
+  local t f top; local -a dirs
+  new_parse_url "$1"
+  [ -n "${2:-}" ] && return 0
+  t=$(mktemp -d)
+  if [ -n "$NEW_NAME" ] && mkdir -p "$SOURCES" 2>/dev/null && [ -w "$SOURCES" ]; then f=$SOURCES/$NEW_FILE; else f=$t/$NEW_FILE; fi
+  if [ ! -s "$f" ]; then
+    info "скачиваю $NEW_FILE"
+    local bar=-sS; [ -t 2 ] && bar=-#
+    if ! { curl -fL $bar --retry 1 --connect-timeout 20 -o "$f.part" "$NEW_DL" && mv "$f.part" "$f"; }; then
+      rm -f "$f.part"; rm -rf "$t"
+      warn "не скачалось: $NEW_DL — рецепт будет заготовкой, способ сборки впиши сам"
+      return 0
+    fi
+  fi
+  NEW_SHA=$(sha256sum "$f" | cut -d' ' -f1)
+  mkdir "$t/src"
+  case $NEW_FILE in
+    *.tar|*.tar.*|*.tgz|*.txz|*.tbz2) tar -xf "$f" -C "$t/src" 2>/dev/null || { rm -rf "$t"; warn "архив не распаковался — способ сборки впиши сам"; return 0; } ;;
+    *.zip) { if command -v unzip >/dev/null; then unzip -q "$f" -d "$t/src"; else python3 -m zipfile -e "$f" "$t/src"; fi; } 2>/dev/null \
+             || { rm -rf "$t"; warn "архив не распаковался — способ сборки впиши сам"; return 0; } ;;
+    *) NEW_TYPE=file; rm -rf "$t"; return 0 ;;
+  esac
+  mapfile -t dirs < <(find "$t/src" -mindepth 1 -maxdepth 1 -type d)
+  if [ "${#dirs[@]}" -eq 1 ]; then top=${dirs[0]}; else top=$t/src; fi
+  NEW_TYPE=$(detect_build "$top")
+  new_deps "$top"
+  case $NEW_TYPE in
+    cmake) have_recipe cmake && case " $NEW_DEPS " in *" cmake "*) ;; *) NEW_DEPS="cmake${NEW_DEPS:+ $NEW_DEPS}";; esac ;;
+    cargo) command -v cargo >/dev/null || NEW_NOTE="для сборки нужен cargo (Rust) — в creeper его пока нет" ;;
+    go)    command -v go >/dev/null || NEW_NOTE="для сборки нужен go — в creeper его пока нет" ;;
+  esac
+  rm -rf "$t"
+}
+
+new_body() { # функции сборки для способа $1
+  case $1 in
+    autotools) cat <<'EOF'
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static
+  make
+}
+package() { make DESTDIR="$PKG" install; }
+EOF
+    ;;
+    autoreconf) cat <<'EOF'
+prepare() { if [ -x autogen.sh ]; then NOCONFIGURE=1 ./autogen.sh; else autoreconf -fi; fi; }
+build() {
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static
+  make
+}
+package() { make DESTDIR="$PKG" install; }
+EOF
+    ;;
+    meson) cat <<'EOF'
+build() {
+  meson setup build --prefix=/usr --buildtype=release
+  ninja -C build -j"$JOBS"
+}
+package() { DESTDIR="$PKG" ninja -C build install; }
+EOF
+    ;;
+    cmake) cat <<'EOF'
+build() {
+  cmake -B build -G Ninja -D CMAKE_INSTALL_PREFIX=/usr -D CMAKE_INSTALL_LIBDIR=lib -D CMAKE_BUILD_TYPE=Release
+  ninja -C build -j"$JOBS"
+}
+package() { DESTDIR="$PKG" ninja -C build install; }
+EOF
+    ;;
+    make) cat <<'EOF'
+build() { make PREFIX=/usr; }
+package() { make PREFIX=/usr DESTDIR="$PKG" install; }
+EOF
+    ;;
+    cargo) cat <<'EOF'
+build() { cargo build --release --locked; }
+package() { install -Dm755 "target/release/$name" "$PKG/usr/bin/$name"; }
+EOF
+    ;;
+    go) cat <<'EOF'
+build() { go build -trimpath -o "$name" .; }
+package() { install -Dm755 "$name" "$PKG/usr/bin/$name"; }
+EOF
+    ;;
+    python) cat <<'EOF'
+build() { pip3 wheel -w dist --no-build-isolation --no-deps --no-cache-dir "$PWD"; }
+package() { pip3 install --root="$PKG" --no-index --no-user --no-deps --no-compile dist/*.whl; }
+EOF
+    ;;
+    file) printf 'build() { :; }\npackage() { install -Dm755 "$SOURCES/%s" "$PKG/usr/bin/$name"; }\n' "${NEW_FILE//"$NEW_VER"/\$version}"
+    ;;
+    custom) cat <<'EOF'
+# способ сборки не определился — впиши команды сам (вызываются в каталоге исходников)
+build() { :; }
+package() {
+  install -Dm755 ИМЯ_ПРОГРАММЫ "$PKG/usr/bin/$name"
+}
+EOF
+    ;;
+    *) cat <<'EOF'
 # --- autotools (./configure) ---
 build() {
   ./configure --prefix=/usr --sysconfdir=/etc --disable-static
   make
 }
-package() { make DESTDIR="\$PKG" install; }
+package() { make DESTDIR="$PKG" install; }
 
 # --- meson (раскомментируй и убери блок выше) ---
-#build()   { meson setup build --prefix=/usr --buildtype=release; ninja -C build -j"\$JOBS"; }
-#package() { DESTDIR="\$PKG" ninja -C build install; }
+#build()   { meson setup build --prefix=/usr --buildtype=release; ninja -C build -j"$JOBS"; }
+#package() { DESTDIR="$PKG" ninja -C build install; }
 
 # --- cmake ---
-#build()   { cmake -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release -G Ninja; ninja -C build -j"\$JOBS"; }
-#package() { DESTDIR="\$PKG" ninja -C build install; }
+#build()   { cmake -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release -G Ninja; ninja -C build -j"$JOBS"; }
+#package() { DESTDIR="$PKG" ninja -C build install; }
 EOF
-  say "заготовка: $out"
-  info "проверь desc, depends и способ сборки; положи в recipes/ репозитория и запусти ферму"
+    ;;
+  esac
+}
+
+new_write() { # new_write <файл> — рецепт из NEW_*
+  local d=${NEW_DESC:-ОПИСАНИЕ} src=$NEW_SRC
+  d=${d//\\/\\\\}; d=${d//\"/\\\"}; d=${d//\$/\\\$}; d=${d//\`/\\\`}
+  case $src in *[\&\?\;\(\)\ ]*) src="\"$src\"";; esac
+  {
+    printf 'name=%s\nversion=%s\nrelease=1\ndesc="%s"\nurl=%s\n' "$NEW_NAME" "$NEW_VER" "$d" "$NEW_HOME"
+    printf 'source=(%s)\nsha256=(%s)\ndepends=(%s)\n' "$src" "$NEW_SHA" "$NEW_DEPS"
+    [ -n "$NEW_MISS" ] && printf '# сборка ищет ещё библиотеки, для которых я не нашёл пакетов: %s\n' "$NEW_MISS"
+    [ -n "$NEW_NOTE" ] && printf '# %s\n' "$NEW_NOTE"
+    printf '# backup=(etc/%s.conf)      # конфиги, которые не надо затирать при обновлении\n\n' "$NEW_NAME"
+    new_body "$NEW_TYPE"
+  } > "$1"
+}
+
+new_save() { # проверить NEW_* и записать свой рецепт → $NEW_OUT
+  local dir
+  valid_name "$NEW_NAME" || die "имя пакета '$NEW_NAME' не годится: только латинские буквы, цифры и . _ + -"
+  [ -n "$NEW_VER" ] || die "не указана версия"
+  case $NEW_VER in *[[:space:]/]*) die "в версии не должно быть пробелов и /";; esac
+  dir=${RECIPES_OUT:-$LOCAL}/$NEW_NAME
+  mkdir -p "$dir" 2>/dev/null && [ -w "$dir" ] || die "не могу писать в $dir — нужен sudo"
+  NEW_OUT=$dir/recipe
+  new_write "$NEW_OUT"; chmod 644 "$NEW_OUT"
+}
+
+ask() { # ask "вопрос" "по умолчанию" → REPLY
+  if [ -t 0 ]; then IFS= read -e -r -p "$1: " -i "$2" REPLY || REPLY=$2
+  else REPLY=$2; fi
+}
+
+cmd_new() {
+  local url= a yes= nodl= t i
+  while [ $# -gt 0 ]; do case $1 in
+    --name) NEW_NAME_SET=$2; shift;; --ver|--version) NEW_VER_SET=$2; shift;; --desc) NEW_DESC=$2; shift;;
+    --deps) NEW_DEPS_SET=$2; shift;; --type) NEW_TYPE_SET=$2; shift;; -o) RECIPES_OUT=$2; shift;;
+    -y|--yes) yes=1;; --no-download) nodl=1;;
+    -*) die "неизвестный ключ $1 (creeper new [ссылка] [--name И] [--ver В] [--desc О] [--deps \"а б\"] [--type способ] [-y])";;
+    *) url=$1;; esac; shift; done
+  [ -t 0 ] || yes=1
+  if [ -z "$url" ]; then
+    [ -z "$yes" ] || die "укажи ссылку на архив исходников или страницу GitHub"
+    echo "Ссылка на архив исходников (….tar.gz) или на страницу проекта на GitHub:"
+    ask "ссылка" ""; url=$REPLY; [ -n "$url" ] || die "отменено"
+  fi
+  [ -n "${RECIPES_OUT:-}" ] || [ "$(id -u)" -eq 0 ] || die "нужны права root: sudo creeper new $url"
+  new_analyze "$url" "$nodl"
+  [ -n "${NEW_NAME_SET:-}" ] && NEW_NAME=$NEW_NAME_SET
+  [ -n "${NEW_VER_SET:-}" ] && { NEW_VER=$NEW_VER_SET; new_srcline; }
+  [ -n "${NEW_DEPS_SET+x}" ] && NEW_DEPS=$NEW_DEPS_SET
+  [ -n "${NEW_TYPE_SET:-}" ] && NEW_TYPE=$NEW_TYPE_SET
+  if [ -n "$NEW_TYPE" ]; then case " $NEW_TYPES " in *" $NEW_TYPE "*) ;; *) die "способ сборки '$NEW_TYPE' не знаю. Есть: $NEW_TYPES";; esac; fi
+
+  if [ -z "$yes" ]; then
+    [ -n "$NEW_TYPE" ] && info "способ сборки: $CB$NEW_TYPE$CN${NEW_DEPS:+, нашёл зависимости: $NEW_DEPS}"
+    [ -n "$NEW_MISS" ] && warn "сборка ищет библиотеки, для которых нет пакетов: $NEW_MISS"
+    [ -n "$NEW_NOTE" ] && warn "$NEW_NOTE"
+    echo "Проверь и поправь (Enter — оставить как есть):"
+    t=$NEW_VER
+    ask "  имя" "$NEW_NAME"; NEW_NAME=$REPLY
+    ask "  версия" "$NEW_VER"; NEW_VER=$REPLY
+    [ "$t" = "$NEW_VER" ] || { new_srcline; NEW_SHA=; }
+    ask "  описание" "$NEW_DESC"; NEW_DESC=$REPLY
+    ask "  зависимости (через пробел)" "$NEW_DEPS"; NEW_DEPS=$REPLY
+    ask "  способ сборки ($NEW_TYPES)" "${NEW_TYPE:-autotools}"; NEW_TYPE=$REPLY
+    case " $NEW_TYPES " in *" $NEW_TYPE "*) ;; *) die "способ сборки '$NEW_TYPE' не знаю";; esac
+  fi
+  [ -n "$NEW_NAME" ] && [ -n "$NEW_VER" ] || die "не понял имя/версию из ссылки — добавь --name ИМЯ --ver ВЕРСИЯ"
+  if [ -e "${RECIPES_OUT:-$LOCAL}/$NEW_NAME/recipe" ]; then
+    [ -z "$yes" ] && ask_yn "Свой рецепт $NEW_NAME уже есть — заменить?" n || die "${RECIPES_OUT:-$LOCAL}/$NEW_NAME/recipe уже есть"
+  fi
+  new_save
+  say "рецепт: $NEW_OUT"
+  lint_file "$NEW_OUT" "$NEW_NAME" || true
+  [ -r "$RECIPES/$NEW_NAME/recipe" ] && [ -z "${RECIPES_OUT:-}" ] && info "в репозитории уже есть $NEW_NAME — твой рецепт теперь главнее"
+  if [ -n "$yes" ] || [ -n "${RECIPES_OUT:-}" ]; then
+    info "дальше: sudo creeper edit $NEW_NAME · sudo creeper install $NEW_NAME · sudo creeper farm build $NEW_NAME"
+    return 0
+  fi
+  while :; do
+    printf '\nЧто дальше?\n  1) собрать и поставить здесь\n  2) собрать на ферме (GitHub) и поставить\n  3) открыть рецепт в редакторе\n  4) ничего — выйти\n'
+    read -r -p "[1-4] " i || return 0
+    case $i in
+      1) exec "$SELF" install "$NEW_NAME" ;;
+      2) exec "$SELF" farm build "$NEW_NAME" ;;
+      3) a=$(editor); [ -n "$a" ] && $a "$NEW_OUT"; lint_file "$NEW_OUT" "$NEW_NAME" && info "рецепт в порядке" ;;
+      *) return 0 ;;
+    esac
+  done
+}
+
+cmd_completion() {
+cat <<'EOF'
+# автодополнение creeper для bash — подключить:  echo '. <(creeper completion)' >> ~/.bashrc
+_creeper() {
+  local cur=${COMP_WORDS[COMP_CWORD]} i=0 cmd= pos
+  while [ $i -lt $COMP_CWORD ]; do
+    case ${COMP_WORDS[$i]} in creeper|*/creeper) pos=$i; break;; esac; i=$((i+1))
+  done
+  [ -n "${pos:-}" ] || { [ "$COMP_CWORD" -eq 1 ] && COMPREPLY=($(compgen -c -- "$cur")); return; }
+  [ $((pos+1)) -lt $COMP_CWORD ] && cmd=${COMP_WORDS[$((pos+1))]}
+  local L=/var/lib/creeper
+  _cr_all()  { { ls "$L/recipes" "$L/local" 2>/dev/null | grep -v ':$'; } | sort -u; }
+  _cr_inst() { ls "$L/installed" 2>/dev/null; }
+  case $cmd in
+    '') COMPREPLY=($(compgen -W "install blow upgrade outdated autoremove orphans fetch list search info deps rdeps files owns size verify doctor log history sync farm self-update clean new add edit lint cat forget mark hold unhold rollback pack tui completion help version" -- "$cur")) ;;
+    install|i|info|deps|fetch|edit|lint|cat|search|s)
+        case $cur in -*) COMPREPLY=($(compgen -W "--reinstall --rebuild --source --check --force --local" -- "$cur"));;
+                     *)  COMPREPLY=($(compgen -W "$(_cr_all)" -- "$cur"));; esac ;;
+    blow|b|remove|files|verify|upgrade|up|rdeps|hold|unhold|rollback|pack|log)
+        case $cur in -*) COMPREPLY=($(compgen -W "-y --force --purge --dry-run" -- "$cur"));;
+                     *)  COMPREPLY=($(compgen -W "$(_cr_inst)" -- "$cur"));; esac ;;
+    mark) if [ $((pos+2)) -eq $COMP_CWORD ]; then COMPREPLY=($(compgen -W "explicit dep" -- "$cur")); else COMPREPLY=($(compgen -W "$(_cr_inst)" -- "$cur")); fi ;;
+    forget) COMPREPLY=($(compgen -W "$(ls "$L/local" 2>/dev/null)" -- "$cur")) ;;
+    farm) if [ $((pos+2)) -eq $COMP_CWORD ]; then COMPREPLY=($(compgen -W "build send status log token" -- "$cur")); else COMPREPLY=($(compgen -W "$(_cr_all)" -- "$cur")); fi ;;
+    owns|add) COMPREPLY=($(compgen -f -- "$cur")) ;;
+    clean) COMPREPLY=($(compgen -W "--all" -- "$cur")) ;;
+    doctor) COMPREPLY=($(compgen -W "--fast" -- "$cur")) ;;
+    list|ls) COMPREPLY=($(compgen -W "--explicit --deps" -- "$cur")) ;;
+  esac
+}
+complete -F _creeper creeper
+complete -p sudo >/dev/null 2>&1 || complete -o default -o bashdefault -F _creeper sudo
+EOF
 }
 
 
@@ -877,7 +1648,7 @@ farm_send_file() {
   bash -n "$f" || die "$f: ошибка в рецепте"
   n=$(meta_f "$f" name); v=$(meta_f "$f" version)
   [ -n "$n" ] && [ -n "$v" ] || die "$f: в рецепте нет name/version"
-  [[ $n =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || die "$f: странное имя пакета '$n'"
+  valid_name "$n" || die "$f: странное имя пакета '$n'"
   repo_recipe_sha "$n"
   body=$(python3 -c "import json,sys,base64
 f,n,v,sha,ref=sys.argv[1:6]
@@ -887,7 +1658,7 @@ print(json.dumps(d))" "$f" "$n" "$v" "$REPO_SHA" "$FARM_REF")
   gh_api PUT "/repos/$FARM_REPO/contents/recipes/$n/recipe" "$body" || gh_fail "отправка рецепта $n"
   say "рецепт $n-$v отправлен в $FARM_REPO"
   if [ "$(readlink -f "$f")" != "$(readlink -f "$(recipe_file "$n")")" ]; then
-    mkdir -p "$RECIPES/$n"; cp "$f" "$RECIPES/$n/recipe"
+    mkdir -p "$LOCAL/$n"; cp "$f" "$LOCAL/$n/recipe"     # до следующего sync — как свой рецепт
   fi
 }
 
@@ -948,7 +1719,7 @@ cmd_farm_build() {
     -*) die "неизвестный ключ $a";; *) want+=("$a");; esac; done
   [ ${#want[@]} -gt 0 ] || die "что собрать? пример: sudo creeper farm build dwm"
   need_root "farm build"; farm_init
-  for a in "${want[@]}"; do [[ $a =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || die "плохое имя пакета: $a"; done
+  for a in "${want[@]}"; do valid_name "$a" || die "плохое имя пакета: $a"; done
 
   # рецепты (с зависимостями) должны быть в репозитории и совпадать с твоими
   local -A seen=(); local -a queue=("${want[@]}") todo=(); local p d lsha
@@ -1066,44 +1837,61 @@ cmd_farm() {
 }
 
 cmd_list() {
-  local d p n=0 why
+  local d p n=0 why only=
+  case ${1:-} in -e|--explicit) only=explicit;; -d|--deps) only=dep;; '') ;; *) die "creeper list [--explicit|--deps]";; esac
   for d in "$DB"/*/; do
     [ -f "$d/version" ] || continue
-    p=$(basename "$d"); n=$((n+1))
-    why=; [ "$(cat "$d/reason" 2>/dev/null)" = dep ] && why="(зависимость)"
+    p=$(basename "$d"); why=$(cat "$d/reason" 2>/dev/null || echo explicit)
+    [ -z "$only" ] || [ "$why" = "$only" ] || continue
+    n=$((n+1))
+    if [ "$why" = dep ]; then why="(зависимость)"; else why=; fi
+    [ -e "$d/hold" ] && why+="${why:+ }(заморожен)"
     printf '%-20s %-14s %-17s %s\n' "$p" "$(cat "$d/version")-$(inst_release "$p")" "$(cat "$d/date" 2>/dev/null)" "$why"
   done
   [ $n -gt 0 ] || info "пока ничего (базовая система LFS не учитывается)"
 }
 
 cmd_search() {
-  local d p mark
-  for d in "$RECIPES"/*/; do
-    p=$(basename "$d"); [ -r "$d/recipe" ] || continue
-    if [ -n "${1:-}" ]; then { echo "$p"; meta "$p" desc; } | grep -qi -- "$1" || continue; fi
-    mark=; installed "$p" && mark="${CG}[установлен $(inst_version "$p")]${CN}"
-    printf '%-16s %-12s %s %s\n' "$p" "$(meta "$p" version)" "$(meta "$p" desc)" "$mark"
+  local q= a only= n mark hits=0
+  for a in "$@"; do case $a in
+    -l|--local) only=local;; -i|--installed) only=inst;; -*) die "creeper search [слово] [--local|--installed]";; *) q=${a,,};; esac; done
+  load_meta || die "не могу прочитать рецепты"
+  for n in "${MNAMES[@]}"; do
+    [ "$only" = local ] && [ "${MLOC[$n]}" != 1 ] && continue
+    [ "$only" = inst ] && ! installed "$n" && continue
+    if [ -n "$q" ]; then a="$n ${MDESC[$n]}"; case ${a,,} in *"$q"*) ;; *) continue;; esac; fi
+    mark=
+    if installed "$n"; then
+      if [ "$(inst_version "$n")" != "${MV[$n]}" ] || [ "$(inst_release "$n")" != "${MR[$n]}" ]; then
+        mark="${CY}[установлен $(inst_version "$n") — есть обновление]${CN}"
+      else mark="${CG}[установлен]${CN}"; fi
+    fi
+    [ "${MLOC[$n]}" = 1 ] && mark+="${mark:+ }${CB}[свой]${CN}"
+    printf '%-18s %-12s %s %s\n' "$n" "${MV[$n]}" "${MDESC[$n]}" "$mark"; hits=$((hits+1))
   done
+  [ $hits -gt 0 ] || info "ничего не нашлось${q:+ по слову '$q'} (обновить рецепты: sudo creeper sync)"
+  return 0
 }
 
 cmd_info() {
   local p=${1:?укажи пакет}
-  have_recipe "$p" || installed "$p" || die "нет такого пакета: $p"
+  have_recipe "$p" || installed "$p" || die "нет такого пакета: $p$(similar "$p")"
   echo "${CB}$p${CN}"
   if have_recipe "$p"; then
     echo "  описание:    $(meta "$p" desc)"
-    echo "  в рецепте:   $(meta "$p" version)-$(pkgrel "$p")"
+    echo "  в рецепте:   $(meta "$p" version)-$(pkgrel "$p")$(is_local "$p" && echo "  (свой рецепт: $LOCAL/$p/recipe)")"
     echo "  зависит от:  $(meta "$p" depends | tr '\n' ' ')"
     echo "  сайт:        $(meta "$p" url)"
     local b="нет"
     [ -s "$BINCACHE/$(binfile "$p" "$(meta "$p" version)" "$(pkgrel "$p")")" ] && b="есть в кэше"
-    [ "$b" = нет ] && [ -s "$WORK/index.txt" ] && awk -v n="$p" -v v="$(meta "$p" version)" '$1==n && $2==v' "$WORK/index.txt" | grep -q . && b="есть в репозитории"
+    [ "$b" = нет ] && [ -s "$WORK/index.txt" ] && awk -v n="$p" -v v="$(meta "$p" version)" -v r="$(pkgrel "$p")" '$1==n && $2==v && $3==r' "$WORK/index.txt" | grep -q . && b="есть в репозитории"
+    [ "$(meta "$p" norepo)" = 1 ] && b+=" (закрытая программа — на ферму не выкладывается)"
     echo "  бинарник:    $b"
   fi
   if installed "$p"; then
     local sz
     sz=$(sed "s|^|$ROOT|" "$DB/$p/files" | xargs -d '\n' stat -c %s 2>/dev/null | awk '{s+=$1} END{printf "%.1f МБ", s/1048576}')
-    echo "  установлен:  $(inst_version "$p")-$(inst_release "$p") ($(cat "$DB/$p/date")), $(cat "$DB/$p/reason" 2>/dev/null || echo explicit)"
+    echo "  установлен:  $(inst_version "$p")-$(inst_release "$p") ($(cat "$DB/$p/date")), $(cat "$DB/$p/reason" 2>/dev/null || echo explicit)$(held "$p" && echo ", заморожен")"
     echo "  файлов:      $(wc -l < "$DB/$p/files"), размер $sz"
     local r; r=$(rdeps "$p" | tr '\n' ' '); echo "  нужен для:   ${r:--}"
   else
@@ -1121,21 +1909,517 @@ cmd_owns() {
   if [ -n "$hit" ]; then echo "$f принадлежит пакету $CB$hit$CN"; else echo "$f — ничей (базовая LFS или поставлен вручную)"; fi
 }
 
+# ---------- TUI: creeper tui ----------
+UI_ON=; UI_INT=; UI_WINCH=; UI_ROWS=24; UI_COLS=80; KEY=; KEYRAW=
+U_OK='✓'; U_UP='↑'; U_MY='★'; U_SEL='●'; U_DOT='…'; U_HL='─'; U_ARR='→'
+
+ui_size() {
+  local s; s=$(stty size 2>/dev/null) || s=
+  UI_ROWS=${s% *}; UI_COLS=${s#* }
+  [[ $UI_ROWS =~ ^[0-9]+$ ]] && [ "$UI_ROWS" -ge 12 ] || UI_ROWS=24
+  [[ $UI_COLS =~ ^[0-9]+$ ]] && [ "$UI_COLS" -ge 50 ] || UI_COLS=80
+}
+UI_STTY=
+ui_begin() { UI_ON=1; [ -n "$UI_STTY" ] || UI_STTY=$(stty -g 2>/dev/null); printf '\e[?1049h\e[?25l\e[2J'; stty -echo 2>/dev/null; ui_size; }
+ui_end()   {
+  [ -n "$UI_ON" ] || return 0
+  UI_ON=; printf '\e[0m\e[?25h\e[?1049l'
+  if [ -n "$UI_STTY" ]; then stty "$UI_STTY" 2>/dev/null; else stty echo 2>/dev/null; fi
+  return 0
+}
+
+ui_fit() { # ui_fit <строка> <ширина> → REPLY ровно такой ширины
+  local s=$1 w=$2
+  [ "$w" -gt 0 ] || { REPLY=; return; }
+  if [ ${#s} -gt "$w" ]; then REPLY=${s:0:$((w-1))}$U_DOT
+  else printf -v REPLY '%s%*s' "$s" $((w-${#s})) ''; fi
+}
+UI_HLINE=; UI_HLW=0
+ui_line() { # линия во всю ширину (пересчёт только при смене размера)
+  local i
+  if [ "$UI_HLW" -ne "$UI_COLS" ]; then UI_HLINE=; for ((i=0; i<UI_COLS; i++)); do UI_HLINE+=$U_HL; done; UI_HLW=$UI_COLS; fi
+  REPLY=$UI_HLINE
+}
+
+# русская раскладка: клавиши-команды работают и в ней
+declare -A RU2LAT=([й]=q [ц]=w [у]=e [к]=r [е]=t [н]=y [г]=u [ш]=i [щ]=o [з]=p [ф]=a [ы]=s [в]=d [а]=f [п]=g
+  [р]=h [о]=j [л]=k [д]=l [я]=z [ч]=x [с]=c [м]=v [и]=b [т]=n [ь]=m [Й]=Q [Г]=U [Т]=N [И]=B [Ш]=I [П]=G [Н]=Y [Д]=L)
+
+ui_key() { # → $KEY: up down left right pgup pgdn home end enter esc tab btab bs int redraw или символ
+  local k r num
+  UI_INT=
+  while :; do      # read не прерывается сигналами — ждём короткими отрезками и проверяем флаги
+    IFS= read -rsn1 -t 0.4 k; r=$?
+    if [ -n "$UI_INT" ]; then KEY=int; return 0; fi
+    if [ -n "$UI_WINCH" ]; then UI_WINCH=; KEY=redraw; return 0; fi
+    [ $r -eq 0 ] && break
+    [ $r -gt 128 ] && continue                # тайм-аут
+    KEY=eof; return 0
+  done
+  case $k in
+    '') KEY=enter ;;
+    $'\t') KEY=tab ;;
+    $'\x03') KEY=int ;;
+    $'\x7f'|$'\b') KEY=bs ;;
+    $'\e')
+      r=; IFS= read -rsn1 -t 0.05 r
+      if [ -z "$r" ]; then KEY=esc
+      elif [ "$r" = '[' ] || [ "$r" = O ]; then
+        k=; IFS= read -rsn1 -t 0.05 k
+        case $k in
+          A) KEY=up;; B) KEY=down;; C) KEY=right;; D) KEY=left;; H) KEY=home;; F) KEY=end;; Z) KEY=btab;;
+          [0-9]) num=$k
+                 while IFS= read -rsn1 -t 0.05 k && [ "$k" != '~' ]; do num+=$k; done
+                 case $num in 1|7) KEY=home;; 4|8) KEY=end;; 5) KEY=pgup;; 6) KEY=pgdn;; *) KEY=other;; esac ;;
+          *) KEY=other ;;
+        esac
+      else KEY=other; fi ;;
+    [[:ascii:]]) KEY=$k ;;
+    *) KEY=${RU2LAT[$k]:-$k} ;;
+  esac
+  KEYRAW=$k
+}
+
+ui_menu() { # ui_menu "заголовок" пункт... → REPLY = номер пункта (с 0) или -1; пункт "-текст" — не выбирается
+  local title=$1; shift
+  local -a it=("$@"); local n=${#it[@]} cur=0 top=0 i h out row
+  while [ $cur -lt $n ] && [[ ${it[$cur]} == -* ]]; do cur=$((cur+1)); done
+  while :; do
+    ui_size; h=$((UI_ROWS-4)); [ $h -lt 3 ] && h=3
+    [ $cur -lt $top ] && top=$cur
+    [ $cur -ge $((top+h)) ] && top=$((cur-h+1))
+    ui_fit " $title" "$UI_COLS"; out=$'\e[H\e[1m'$REPLY$'\e[0m\e[K\n\e[K\n'
+    for ((row=0; row<h; row++)); do
+      i=$((top+row))
+      if [ $i -ge $n ]; then out+=$'\e[K\n'; continue; fi
+      if [[ ${it[$i]} == -* ]]; then ui_fit "    ${it[$i]#-}" "$UI_COLS"; out+=$'\e[2m'$REPLY$'\e[0m\e[K\n'
+      elif [ $i -eq $cur ]; then ui_fit "  > ${it[$i]}" "$UI_COLS"; out+=$'\e[7m'$REPLY$'\e[0m\e[K\n'
+      else ui_fit "    ${it[$i]}" "$UI_COLS"; out+=$REPLY$'\e[K\n'; fi
+    done
+    ui_fit " ↑↓ выбор   Enter — да   Esc — назад" "$UI_COLS"; out+=$'\e[K\n\e[2m'$REPLY$'\e[0m\e[K'
+    printf '%s' "$out"
+    ui_key
+    case $KEY in
+      up|k)   i=$cur; while [ $i -gt 0 ]; do i=$((i-1)); [[ ${it[$i]} == -* ]] || { cur=$i; break; }; done ;;
+      down|j) i=$cur; while [ $i -lt $((n-1)) ]; do i=$((i+1)); [[ ${it[$i]} == -* ]] || { cur=$i; break; }; done ;;
+      home)   cur=0; while [ $cur -lt $((n-1)) ] && [[ ${it[$cur]} == -* ]]; do cur=$((cur+1)); done ;;
+      end)    cur=$((n-1)); while [ $cur -gt 0 ] && [[ ${it[$cur]} == -* ]]; do cur=$((cur-1)); done ;;
+      enter|right|l) [ $cur -lt $n ] && { REPLY=$cur; return 0; } ;;
+      esc|left|q|h|int|eof) REPLY=-1; return 1 ;;
+    esac
+  done
+}
+
+ui_input() { # ui_input "вопрос" "значение" → REPLY; код 1 — отмена (Esc, Ctrl+C)
+  local prompt=$1 s=$2 w shown
+  while :; do
+    w=$((UI_COLS-6)); shown=$s
+    [ ${#shown} -gt $w ] && shown=$U_DOT${shown: -$((w-1))}
+    printf '\e[%d;1H\e[J\e[1m %s\e[0m\n\e[2m Enter — готово · Esc — отмена · Ctrl+U — стереть всё\e[0m\n > %s\e[?25h' $((UI_ROWS-3)) "$prompt" "$shown"
+    ui_key
+    printf '\e[?25l'
+    case $KEY in
+      enter) REPLY=$s; return 0 ;;
+      esc|int|eof) REPLY=; return 1 ;;
+      bs) s=${s%?} ;;
+      $'\x15') s= ;;
+      $'\x17') while [ "${s: -1}" = ' ' ]; do s=${s%?}; done; case $s in *' '*) s=${s% *}' ';; *) s=;; esac ;;
+      tab|btab|up|down|left|right|pgup|pgdn|home|end|other|redraw) ;;
+      *) [[ $KEYRAW == [[:cntrl:]] ]] || s+=$KEYRAW ;;
+    esac
+  done
+}
+
+ui_confirm() { # ui_confirm "вопрос" → 0 = да
+  printf '\e[%d;1H\e[J\e[1m %s\e[0m [y/N] ' $((UI_ROWS-1)) "$1"
+  ui_key
+  case $KEY in y|Y|д|Д) return 0;; *) return 1;; esac
+}
+
+ui_msg() { # ui_msg "текст" — строка внизу до нажатия клавиши
+  printf '\e[%d;1H\e[J %s \e[2m(любая клавиша)\e[0m' $((UI_ROWS-1)) "$1"
+  ui_key
+}
+
+# ui_run [-v] <команда creeper...> — выйти из интерфейса, выполнить, вернуться
+#   -v: просмотр (root не нужен, длинный вывод — через less)
+ui_run() {
+  local view= rc
+  [ "$1" = -v ] && { view=1; shift; }
+  ui_end
+  if [ -n "$view" ]; then
+    if command -v less >/dev/null; then "$SELF" "$@" 2>&1 | less -R -P ' q — назад, стрелки — листать '
+    else "$SELF" "$@"; read -r -s -n1 -p $'\n— любая клавиша —'; fi
+    ui_begin; UI_INT=; return 0
+  fi
+  printf '%s$ creeper %s%s\n' "$CD" "$*" "$CN"
+  if [ "$(id -u)" -eq 0 ]; then "$SELF" "$@"
+  elif command -v sudo >/dev/null; then sudo "$SELF" "$@"
+  else printf 'нужны права root, а sudo нет — запусти creeper tui от root\n'; false; fi
+  rc=$?
+  if [ $rc -eq 0 ]; then printf '\n%s— готово —%s  Enter — назад ' "$CG" "$CN"
+  else printf '\n%s— не получилось (код %d) —%s  Enter — назад ' "$CR" "$rc" "$CN"; fi
+  UI_INT=; read -r -s
+  ui_begin; UI_INT=
+  return $rc
+}
+
+# --- данные для списка ---
+declare -A T_IV=() T_IR=() T_WHY=() T_HOLD=() T_RD=() T_SEL=()
+T_ALL=(); T_VIS=(); T_TAB=0; T_FILTER=; T_CUR=0; T_TOP=0; T_NINST=0; T_NOUT=0; T_NLOC=0
+T_TABS=("Все" "Установленные" "Обновления" "Свои")
+
+tui_load() {
+  local d p x
+  META_CACHE=; load_meta
+  T_IV=(); T_IR=(); T_WHY=(); T_HOLD=(); T_RD=(); T_ALL=("${MNAMES[@]}"); T_NINST=0; T_NOUT=0; T_NLOC=0
+  for d in "$DB"/*/; do
+    [ -f "$d/version" ] || continue
+    p=${d%/}; p=${p##*/}
+    x=; read -r x < "$d/version"; T_IV[$p]=$x
+    x=1; [ -f "$d/release" ] && read -r x < "$d/release"; T_IR[$p]=${x:-1}
+    x=explicit; [ -f "$d/reason" ] && read -r x < "$d/reason"; T_WHY[$p]=$x
+    [ -e "$d/hold" ] && T_HOLD[$p]=1
+    if [ -f "$d/depends" ]; then while read -r x; do [ -n "$x" ] && T_RD[$x]+="$p "; done < "$d/depends"; fi
+    T_NINST=$((T_NINST+1))
+    if [ -z "${MV[$p]:-}" ]; then      # установлен, а рецепта уже нет
+      T_ALL+=("$p"); MV[$p]=${T_IV[$p]}; MR[$p]=${T_IR[$p]}; MLOC[$p]=0; MDEP[$p]=; MDESC[$p]="(рецепта больше нет)"
+    elif [ "${T_IV[$p]}" != "${MV[$p]}" ] || [ "${T_IR[$p]}" != "${MR[$p]}" ]; then T_NOUT=$((T_NOUT+1)); fi
+  done
+  for p in "${MNAMES[@]}"; do [ "${MLOC[$p]}" = 1 ] && T_NLOC=$((T_NLOC+1)); done
+  mapfile -t T_ALL < <(printf '%s\n' "${T_ALL[@]}" | csort -u)
+  for p in "${!T_SEL[@]}"; do [ -n "${MV[$p]:-}" ] || unset "T_SEL[$p]"; done
+}
+
+tui_outdated() { [ -n "${T_IV[$1]:-}" ] && { [ "${T_IV[$1]}" != "${MV[$1]}" ] || [ "${T_IR[$1]}" != "${MR[$1]}" ]; }; }
+
+tui_filter() {
+  local p s q=${T_FILTER,,}
+  T_VIS=()
+  for p in "${T_ALL[@]}"; do
+    case $T_TAB in
+      1) [ -n "${T_IV[$p]:-}" ] || continue ;;
+      2) tui_outdated "$p" || continue ;;
+      3) [ "${MLOC[$p]}" = 1 ] || continue ;;
+    esac
+    if [ -n "$q" ]; then s="$p ${MDESC[$p]}"; case ${s,,} in *"$q"*) ;; *) continue;; esac; fi
+    T_VIS+=("$p")
+  done
+  [ $T_CUR -ge ${#T_VIS[@]} ] && T_CUR=$(( ${#T_VIS[@]} > 0 ? ${#T_VIS[@]}-1 : 0 ))
+  [ $T_CUR -lt 0 ] && T_CUR=0
+}
+
+tui_draw() {
+  local out h i row p mark col ver line wn=22 wv=20 wd nsel=${#T_SEL[@]} t
+  ui_size; h=$((UI_ROWS-7)); [ $h -lt 3 ] && h=3
+  [ $T_CUR -lt $T_TOP ] && T_TOP=$T_CUR
+  [ $T_CUR -ge $((T_TOP+h)) ] && T_TOP=$((T_CUR-h+1))
+  [ $T_TOP -lt 0 ] && T_TOP=0
+  [ "$UI_COLS" -lt 90 ] && { wn=18; wv=16; }
+  wd=$((UI_COLS-wn-wv-6))
+  # шапка
+  t=" creeper $CREEPER_VERSION — Hyprn LFS    установлено $T_NINST · обновлений $T_NOUT · своих $T_NLOC"
+  [ "$nsel" -gt 0 ] && t+=" · отмечено $nsel"
+  ui_fit "$t" "$UI_COLS"
+  out=$'\e[H\e[1;32m'$REPLY$'\e[0m\e[K\n '
+  # вкладки
+  for i in 0 1 2 3; do
+    if [ $i -eq $T_TAB ]; then out+=$'\e[7m '${T_TABS[$i]}$' \e[0m '; else out+=" ${T_TABS[$i]}  "; fi
+  done
+  [ -n "$T_FILTER" ] && out+=$'   \e[33mпоиск: '$T_FILTER$'\e[0m'
+  ui_line; out+=$'\e[K\n\e[2m'$REPLY$'\e[0m\n'
+  # список
+  for ((row=0; row<h; row++)); do
+    i=$((T_TOP+row))
+    if [ $i -ge ${#T_VIS[@]} ]; then
+      [ $row -eq 0 ] && out+=$'\e[2m   пусто'"${T_FILTER:+ — Esc сбросит поиск}"$'\e[0m'
+      out+=$'\e[K\n'; continue
+    fi
+    p=${T_VIS[$i]}; mark=' '; col=; ver=${MV[$p]}
+    if tui_outdated "$p"; then mark=$U_UP; col=$'\e[33m'; ver="${T_IV[$p]} $U_ARR ${MV[$p]}"
+      [ "${T_IV[$p]}" = "${MV[$p]}" ] && ver="${MV[$p]} (релиз ${MR[$p]})"
+    elif [ -n "${T_IV[$p]:-}" ]; then mark=$U_OK; col=$'\e[32m'; fi
+    t=' '; [ "${MLOC[$p]}" = 1 ] && t=$U_MY
+    [ -n "${T_SEL[$p]:-}" ] && t=$U_SEL
+    ui_fit "$p" $wn; line=$REPLY' '; ui_fit "$ver" $wv; line+=$REPLY' '; ui_fit "${MDESC[$p]}" $wd; line+=$REPLY
+    if [ $i -eq $T_CUR ]; then out+=$'\e[7m'" $mark$t $line"$'\e[0m\e[K\n'
+    else out+=" $col$mark"$'\e[0m\e[36m'"$t"$'\e[0m'" $line"$'\e[K\n'; fi
+  done
+  ui_line; out+=$'\e[2m'$REPLY$'\e[0m\n'
+  # подробности
+  if [ ${#T_VIS[@]} -gt 0 ]; then
+    p=${T_VIS[$T_CUR]}
+    if [ -n "${T_IV[$p]:-}" ]; then
+      t="установлен ${T_IV[$p]}-${T_IR[$p]}"; [ "${T_WHY[$p]}" = dep ] && t+=" как зависимость"
+      [ -n "${T_HOLD[$p]:-}" ] && t+=", заморожен"
+      tui_outdated "$p" && t+=" · в рецепте ${MV[$p]}-${MR[$p]}"
+    else t="не установлен · в рецепте ${MV[$p]}-${MR[$p]}"; fi
+    [ "${MLOC[$p]}" = 1 ] && t+=" · свой рецепт"
+    ui_fit " $p: $t" "$UI_COLS"; out+=$'\e[1m'$REPLY$'\e[0m\e[K\n'
+    ui_fit " зависит от: ${MDEP[$p]:--}   нужен для: ${T_RD[$p]:--}" "$UI_COLS"; out+=$REPLY$'\e[K\n'
+  else out+=$'\e[K\n\e[K\n'; fi
+  for t in " Enter действия  i поставить  b взорвать  Пробел отметить  u обновить всё  n новый пакет  / поиск  Tab вкладки  m меню  ? справка  q выход" \
+           " Enter действия  i поставить  b взорвать  u обновить  n новый пакет  / поиск  m меню  ? справка  q выход" \
+           " Enter действия  i пост.  b взорв.  u обнов.  n новый  / поиск  m меню  ? q"; do
+    [ ${#t} -le "$UI_COLS" ] && break
+  done
+  ui_fit "$t" "$UI_COLS"; out+=$'\e[2m'$REPLY$'\e[0m\e[K'
+  printf '%s' "$out"
+}
+
+tui_targets() { # отмеченные пакеты, иначе пакет под курсором → REPLY (через пробел)
+  if [ ${#T_SEL[@]} -gt 0 ]; then REPLY=$(printf '%s\n' "${!T_SEL[@]}" | csort | tr '\n' ' '); REPLY=${REPLY% }
+  elif [ ${#T_VIS[@]} -gt 0 ]; then REPLY=${T_VIS[$T_CUR]}
+  else REPLY=; fi
+}
+
+tui_install() {
+  local p; local -a w=()
+  tui_targets; [ -n "$REPLY" ] || return 0
+  for p in $REPLY; do { [ -z "${T_IV[$p]:-}" ] || tui_outdated "$p"; } && w+=("$p"); done
+  [ ${#w[@]} -gt 0 ] || { ui_msg "уже установлено: $REPLY"; return 0; }
+  ui_confirm "Поставить: ${w[*]}?" || return 0
+  ui_run install "${w[@]}"; T_SEL=(); tui_load
+}
+
+tui_blow() {
+  local p; local -a w=()
+  tui_targets; [ -n "$REPLY" ] || return 0
+  for p in $REPLY; do [ -n "${T_IV[$p]:-}" ] && w+=("$p"); done
+  [ ${#w[@]} -gt 0 ] || { ui_msg "не установлено: $REPLY"; return 0; }
+  ui_confirm "Взорвать: ${w[*]}?" || return 0
+  ui_run blow -y "${w[@]}"; T_SEL=(); tui_load
+}
+
+tui_actions() { # меню действий для пакета под курсором
+  local p=${T_VIS[$T_CUR]:-}; [ -n "$p" ] || return 0
+  local -a lab=() act=()
+  add() { lab+=("$1"); act+=("$2"); }      # (локальная помощница меню)
+  if [ -n "${T_IV[$p]:-}" ]; then
+    tui_outdated "$p" && add "Обновить до ${MV[$p]}-${MR[$p]}" upgrade
+    add "Взорвать (удалить)" blow
+    add "Переставить (из готового бинарника)" reinstall
+    add "Пересобрать из исходников" rebuild
+    add "-" -
+    add "Сведения" info;  add "Файлы пакета" files;  add "Проверить файлы (sha256)" verify
+    add "Дерево зависимостей" deps
+    [ -f "$LOGS/$p.log" ] && add "Лог сборки" log
+    add "-" -
+    if [ -n "${T_HOLD[$p]:-}" ]; then add "Разморозить (снова обновлять)" unhold; else add "Заморозить (не обновлять)" hold; fi
+    add "Откатить на прежнюю сборку" rollback
+    if [ "${T_WHY[$p]}" = dep ]; then add "Пометить: нужен мне (не предлагать к удалению)" mark-explicit
+    else add "Пометить: только зависимость" mark-dep; fi
+  else
+    add "Поставить" install
+    add "Собрать на ферме (GitHub) и поставить" farm
+    add "-" -
+    add "Сведения" info;  add "Дерево зависимостей" deps
+  fi
+  if have_recipe "$p"; then
+    add "-" -
+    add "Показать рецепт" cat;  add "Изменить рецепт" edit;  add "Проверить рецепт" lint
+    [ -n "${T_IV[$p]:-}" ] && add "Собрать на ферме (GitHub)" farm
+    [ "${MLOC[$p]}" = 1 ] && add "Отправить свой рецепт в репозиторий" send
+    [ "${MLOC[$p]}" = 1 ] && add "Убрать свой рецепт" forget
+  fi
+  ui_menu "$p ${MV[$p]} — ${MDESC[$p]}" "${lab[@]}" || return 0
+  case ${act[$REPLY]} in
+    install)   ui_run install "$p" ;;
+    upgrade)   ui_run upgrade "$p" ;;
+    blow)      ui_confirm "Взорвать $p?" && ui_run blow -y "$p" ;;
+    reinstall) ui_run install --reinstall "$p" ;;
+    rebuild)   ui_run install --rebuild "$p" ;;
+    farm)      ui_run farm build "$p" ;;
+    send)      ui_run farm send "$p" ;;
+    info|files|deps|cat|log) ui_run -v "${act[$REPLY]}" "$p" ;;
+    lint)      ui_run -v lint "$p" ;;
+    verify)    ui_run verify "$p" ;;
+    edit)      ui_run edit "$p" ;;
+    hold|unhold|rollback) ui_run "${act[$REPLY]}" "$p" ;;
+    mark-explicit) ui_run mark explicit "$p" ;;
+    mark-dep)  ui_run mark dep "$p" ;;
+    forget)    ui_confirm "Убрать свой рецепт $p?" && ui_run forget "$p" ;;
+  esac
+  tui_load
+}
+
+tui_more() {
+  ui_menu "creeper — меню" \
+    "Создать свой пакет" "Обновить рецепты (sync)" "Обновить всё установленное (upgrade)" \
+    "-" "Проверить систему (doctor)" "Проверить файлы всех пакетов (verify)" "Убрать ненужные зависимости (autoremove)" \
+    "Очистить кэш и временные файлы (clean --all)" "Самые большие пакеты" "История" \
+    "-" "Ферма: последние сборки" "Ферма: сохранить токен GitHub" "Обновить сам creeper (self-update)" || return 0
+  case $REPLY in
+    0) tui_new ;;
+    1) ui_run sync ;;
+    2) ui_run upgrade ;;
+    4) ui_run doctor ;;
+    5) ui_run verify ;;
+    6) ui_run autoremove ;;
+    7) ui_confirm "Удалить старые исходники и бинарники из кэша?" && ui_run clean --all ;;
+    8) ui_run -v size 40 ;;
+    9) ui_run -v history 200 ;;
+    11) ui_run -v farm status ;;
+    12) ui_run farm token ;;
+    13) ui_run self-update ;;
+  esac
+  tui_load
+}
+
+tui_help() {
+  ui_end
+  cat <<EOF
+${CB}creeper tui — клавиши${CN}
+
+  ↑ ↓ PgUp PgDn Home End   движение по списку (также j / k)
+  Tab, ← →, 1-4            вкладки: все / установленные / обновления / свои
+  /                        поиск по имени и описанию (Esc — сбросить)
+  Enter                    действия с пакетом
+  Пробел                   отметить несколько пакетов
+  i                        поставить (отмеченные или текущий)
+  b                        взорвать (отмеченные или текущий)
+  u                        обновить всё      s   обновить рецепты (sync)
+  n                        создать свой пакет по ссылке
+  m                        меню: проверка системы, очистка, ферма...
+  q                        выход
+
+  Значки:  $U_OK установлен   $U_UP есть обновление   $U_MY свой рецепт   $U_SEL отмечен
+  Клавиши работают и в русской раскладке.
+
+EOF
+  read -r -s -n1 -p "— любая клавиша —"
+  ui_begin
+}
+
+# --- мастер нового пакета в TUI ---
+tui_new() {
+  local url t res rc i f
+  ui_input "Новый пакет: ссылка на архив исходников (….tar.gz) или на страницу проекта на GitHub" "" || return 0
+  url=$REPLY; [ -n "$url" ] || return 0
+  ui_end
+  say "изучаю $url"
+  res=$(mktemp)
+  NEW_NAME=; NEW_VER=; NEW_DESC=; NEW_HOME=; NEW_DL=; NEW_FILE=; NEW_SRC=; NEW_SHA=; NEW_TYPE=; NEW_DEPS=; NEW_MISS=; NEW_NOTE=
+  ( new_analyze "$url"
+    for i in NEW_NAME NEW_VER NEW_DESC NEW_HOME NEW_DL NEW_FILE NEW_SRC NEW_SHA NEW_TYPE NEW_DEPS NEW_MISS NEW_NOTE; do
+      printf '%s=%q\n' "$i" "${!i}"; done > "$res" )
+  rc=$?
+  if [ $rc -ne 0 ] || [ ! -s "$res" ]; then
+    rm -f "$res"; read -r -s -p $'\n— не получилось —  Enter — назад '; ui_begin; return 0
+  fi
+  . "$res"; rm -f "$res"
+  local ver0=$NEW_VER
+  ui_begin
+  while :; do
+    local -a it=(
+      "Имя:          ${NEW_NAME:-(впиши)}"
+      "Версия:       ${NEW_VER:-(впиши)}"
+      "Описание:     ${NEW_DESC:-(впиши)}"
+      "Зависимости:  ${NEW_DEPS:-(нет)}"
+      "Сборка:       ${NEW_TYPE:-заготовка (способ не определён)}"
+      "-Исходники:    $NEW_SRC"
+    )
+    [ -n "$NEW_MISS" ] && it+=("-не нашёл пакетов для библиотек: $NEW_MISS")
+    [ -n "$NEW_NOTE" ] && it+=("-$NEW_NOTE")
+    it+=("-" "Сохранить и собрать здесь" "Сохранить и собрать на ферме (GitHub)" "Сохранить и открыть в редакторе" "Только сохранить рецепт" "Отмена")
+    local base=$(( ${#it[@]} - 5 ))
+    ui_menu "Новый пакет — проверь, поправь (Enter на строке) и выбери, что делать" "${it[@]}" || return 0
+    i=$REPLY
+    case $i in
+      0) ui_input "Имя пакета (латиница, цифры, . _ + -)" "$NEW_NAME" && [ -n "$REPLY" ] && NEW_NAME=$REPLY ;;
+      1) ui_input "Версия" "$NEW_VER" && [ -n "$REPLY" ] && { NEW_VER=$REPLY; [ "$NEW_VER" = "$ver0" ] || { new_srcline; NEW_SHA=; ver0=$NEW_VER; }; } ;;
+      2) ui_input "Описание (одна строка)" "$NEW_DESC" && NEW_DESC=$REPLY ;;
+      3) ui_input "Зависимости — имена пакетов creeper через пробел" "$NEW_DEPS" && NEW_DEPS=$REPLY ;;
+      4) local -a ty=($NEW_TYPES)
+         ui_menu "Способ сборки" \
+           "autotools — ./configure && make" "autoreconf — сначала autoreconf/autogen.sh" "meson + ninja" "cmake + ninja" \
+           "make — просто Makefile" "cargo — Rust" "go" "python — pip wheel" "file — один готовый файл в /usr/bin" \
+           "custom — впишу команды сам" && NEW_TYPE=${ty[$REPLY]} ;;
+      *) [ $i -ge $base ] || continue
+         [ $((i-base)) -eq 4 ] && return 0
+         # проверка и запись (от root — сразу, иначе через sudo creeper add)
+         if ! valid_name "$NEW_NAME"; then ui_msg "имя '$NEW_NAME' не годится: латинские буквы, цифры и . _ + -"; continue; fi
+         if [ -z "$NEW_VER" ]; then ui_msg "впиши версию"; continue; fi
+         if [ -r "$LOCAL/$NEW_NAME/recipe" ]; then ui_confirm "Свой рецепт $NEW_NAME уже есть — заменить?" || continue; fi
+         f=$(mktemp); new_write "$f"
+         ui_run add "$f"; rc=$?; rm -f "$f"
+         [ $rc -eq 0 ] || continue
+         case $((i-base)) in
+           0) ui_run install "$NEW_NAME" ;;
+           1) ui_run farm build "$NEW_NAME" ;;
+           2) ui_run edit "$NEW_NAME" ;;
+         esac
+         return 0 ;;
+    esac
+  done
+}
+
+cmd_tui() {
+  { [ -t 0 ] && [ -t 1 ]; } || die "creeper tui нужен терминал"
+  # ширина русских букв считается верно только в UTF-8
+  case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in *[Uu][Tt][Ff]*) ;; *) export LC_ALL=C.UTF-8 ;; esac
+  if [ "${TERM:-linux}" = linux ]; then U_OK='+'; U_UP='^'; U_MY='*'; U_SEL='#'; U_DOT='~'; U_HL='-'; U_ARR='>'; fi
+  trap 'UI_INT=1' INT
+  trap 'UI_WINCH=1' WINCH
+  ui_begin
+  tui_load; tui_filter
+  local h p
+  while :; do
+    tui_draw
+    ui_key
+    h=$((UI_ROWS-7)); [ $h -lt 3 ] && h=3
+    case $KEY in
+      up|k)    [ $T_CUR -gt 0 ] && T_CUR=$((T_CUR-1)) ;;
+      down|j)  [ $T_CUR -lt $(( ${#T_VIS[@]}-1 )) ] && T_CUR=$((T_CUR+1)) ;;
+      pgup)    T_CUR=$((T_CUR-h)); [ $T_CUR -lt 0 ] && T_CUR=0 ;;
+      pgdn)    T_CUR=$((T_CUR+h)); [ $T_CUR -ge ${#T_VIS[@]} ] && T_CUR=$(( ${#T_VIS[@]}-1 )); [ $T_CUR -lt 0 ] && T_CUR=0 ;;
+      home|g)  T_CUR=0 ;;
+      end|G)   T_CUR=$(( ${#T_VIS[@]}-1 )); [ $T_CUR -lt 0 ] && T_CUR=0 ;;
+      tab|right) T_TAB=$(( (T_TAB+1)%4 )); T_CUR=0; T_TOP=0; tui_filter ;;
+      btab|left) T_TAB=$(( (T_TAB+3)%4 )); T_CUR=0; T_TOP=0; tui_filter ;;
+      1|2|3|4) T_TAB=$((KEY-1)); T_CUR=0; T_TOP=0; tui_filter ;;
+      /|.)     ui_input "Поиск по имени и описанию" "$T_FILTER" && { T_FILTER=$REPLY; T_CUR=0; T_TOP=0; tui_filter; } ;;
+      esc)     if [ -n "$T_FILTER" ]; then T_FILTER=; T_CUR=0; T_TOP=0; tui_filter; elif [ ${#T_SEL[@]} -gt 0 ]; then T_SEL=(); fi ;;
+      ' ')     p=${T_VIS[$T_CUR]:-}
+               if [ -n "$p" ]; then
+                 if [ -n "${T_SEL[$p]:-}" ]; then unset "T_SEL[$p]"; else T_SEL[$p]=1; fi
+                 [ $T_CUR -lt $(( ${#T_VIS[@]}-1 )) ] && T_CUR=$((T_CUR+1))
+               fi ;;
+      enter)   tui_actions; tui_filter ;;
+      i)       tui_install; tui_filter ;;
+      b)       tui_blow; tui_filter ;;
+      u)       if [ $T_NOUT -eq 0 ]; then ui_msg "всё свежее — обновлять нечего (s — обновить рецепты)"
+               else ui_confirm "Обновить пакетов: $T_NOUT?" && { ui_run upgrade; tui_load; tui_filter; }; fi ;;
+      s)       ui_run sync; tui_load; tui_filter ;;
+      n)       tui_new; tui_load; tui_filter ;;
+      m|o)     tui_more; tui_filter ;;
+      '?'|,)   tui_help ;;
+      q|Q|int|eof) break ;;
+    esac
+  done
+  ui_end
+  trap on_signal INT; trap - WINCH
+}
+
 cmd=${1:-help}; [ $# -gt 0 ] && shift
 case $cmd in
   install|i)        cmd_install "$@" ;;
   blow|b|remove)    cmd_blow "$@" ;;
   upgrade|up)       cmd_upgrade "$@" ;;
+  outdated)         cmd_outdated ;;
   autoremove)       cmd_autoremove "$@" ;;
   orphans)          cmd_orphans ;;
   fetch)            cmd_fetch "$@" ;;
-  list|ls)          cmd_list ;;
+  list|ls)          cmd_list "$@" ;;
   search|s)         cmd_search "$@" ;;
   info)             cmd_info "$@" ;;
   deps)             cmd_deps "$@" ;;
+  rdeps)            cmd_rdeps "$@" ;;
   files)            cmd_files "$@" ;;
   owns)             cmd_owns "$@" ;;
+  size)             cmd_size "$@" ;;
   verify|check)     cmd_verify "$@" ;;
+  doctor)           cmd_doctor "$@" ;;
   log)              cmd_log "$@" ;;
   history)          cmd_history "$@" ;;
   sync)             cmd_sync ;;
@@ -1143,8 +2427,19 @@ case $cmd in
   self-update)      cmd_self_update ;;
   clean)            cmd_clean "$@" ;;
   new)              cmd_new "$@" ;;
+  add)              cmd_add "$@" ;;
+  edit)             cmd_edit "$@" ;;
+  lint)             cmd_lint "$@" ;;
+  cat|recipe)       cmd_cat "$@" ;;
+  forget)           cmd_forget "$@" ;;
+  mark)             cmd_mark "$@" ;;
+  hold)             cmd_hold 1 "$@" ;;
+  unhold)           cmd_hold 0 "$@" ;;
+  rollback)         cmd_rollback "$@" ;;
   pack)             cmd_pack "$@" ;;
   index)            cmd_index ;;
+  tui|ui)           cmd_tui ;;
+  completion)       cmd_completion ;;
   version|--version|-V) echo "creeper $CREEPER_VERSION" ;;
   help|-h|--help)   usage ;;
   *) usage; exit 1 ;;

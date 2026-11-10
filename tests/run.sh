@@ -152,7 +152,7 @@ echo "== 11. clean, new, history, ошибки рецептов"
 mkdir -p "$R/var/tmp/creeper/junk"; touch "$R/var/cache/creeper/sources/old-0.1.tar.gz"
 run clean --all; check "clean --all" [ ! -e "$R/var/cache/creeper/sources/old-0.1.tar.gz" -a ! -e "$R/var/tmp/creeper/junk" ]
 check "исходник установленного пакета сохранён" [ -e "$R/var/cache/creeper/sources/hello-1.2.tar.gz" ]
-OUT=$(cd /tmp && rm -rf /tmp/libfoo && RECIPES_OUT=/tmp "$C" new https://example.org/dl/libfoo-2.4.1.tar.xz 2>&1)
+OUT=$(cd /tmp && rm -rf /tmp/libfoo && RECIPES_OUT=/tmp "$C" new https://example.org/dl/libfoo-2.4.1.tar.xz --no-download 2>&1)
 check "new: заготовка" grep -q 'version=2.4.1' /tmp/libfoo/recipe
 check "new: \$version в ссылке" grep -q 'libfoo-\$version.tar.xz' /tmp/libfoo/recipe
 check "new: заготовка — корректный bash" bash -n /tmp/libfoo/recipe
@@ -212,7 +212,16 @@ check "повторно рецепты не отправляются" bash -c "!
 run farm status; check "farm status показывает запуски" grep -q 'build: hello' <<<"$OUT"
 mkdir -p /tmp/ctest-newrec; printf 'name=newpkg\nversion=2.0\nsource=()\nbuild(){ :; }\n' > /tmp/ctest-newrec/recipe
 run farm send /tmp/ctest-newrec/recipe; check "farm send файла" grep -q 'newpkg-2.0 отправлен' <<<"$OUT"
-check "рецепт скопирован себе" [ -f "$R/var/lib/creeper/recipes/newpkg/recipe" ]
+check "рецепт сохранён как свой" [ -f "$R/var/lib/creeper/local/newpkg/recipe" ]
+rm -rf /tmp/ctest-gh; mkdir -p /tmp/ctest-gh
+OUT=$(RECIPES_OUT=/tmp/ctest-gh "$C" new https://github.com/pub/tool 2>&1 </dev/null)
+check "new по странице GitHub: последняя версия" grep -qx 'version=2.5.1' /tmp/ctest-gh/tool/recipe
+check "new по странице GitHub: ссылка на архив тега" grep -qF 'source=(tool-$version.tar.gz::https://github.com/pub/tool/archive/refs/tags/v$version.tar.gz)' /tmp/ctest-gh/tool/recipe
+check "new по странице GitHub: описание и сайт" bash -c ". /tmp/ctest-gh/tool/recipe; [ \"\$desc\" = 'A tool, \"quoted\"' ] && [ \"\$url\" = https://github.com/pub/tool ]"
+OUT=$(RECIPES_OUT=/tmp/ctest-gh "$C" new https://github.com/pub/tagsonly.git 2>&1 </dev/null)
+check "new: без релизов берётся тег, release_3_0_2 → 3.0.2" grep -qx 'version=3.0.2' /tmp/ctest-gh/tagsonly/recipe
+OUT=$(RECIPES_OUT=/tmp/ctest-gh "$C" new https://github.com/foo/Bar/archive/refs/tags/v1.4.tar.gz --no-download 2>&1 </dev/null)
+check "new: ссылка на архив тега GitHub → имя-версия.tar.gz::" grep -qF 'source=(bar-$version.tar.gz::https://github.com/foo/Bar/archive/refs/tags/v$version.tar.gz)' /tmp/ctest-gh/bar/recipe
 start_mock fail
 mk extra 1.0; rec extra 1.0 ""
 run farm build extra
@@ -236,6 +245,179 @@ mk evil 1.0 'install -Dm755 /dev/null $(DESTDIR)/usr/bin/hello'; rec evil 1.0 ""
 "$C" install evil >/dev/null 2>&1
 check "бракованный бинарник не в кэше" [ ! -e "$R/var/cache/creeper/bin/evil-1.0-1.tar.zst" ]
 run index; check "и не в индексе" bash -c "! grep -q '^evil ' <<<\"\$0\"" "$OUT"
+
+echo "== 18. upgrade: порядок по зависимостям, hold, outdated"
+reset_root; mk aaa 1.0; mk zzz 1.0; rec zzz 1.0 ""; rec aaa 1.0 "zzz"
+"$C" install aaa >/dev/null 2>&1
+mk aaa 2.0; mk zzz 2.0; rec zzz 2.0 ""; rec aaa 2.0 "zzz"
+run outdated; check "outdated показывает оба" bash -c "grep -q 'aaa.*1.0-1 → 2.0-1' <<<\"\$0\" && grep -q 'zzz' <<<\"\$0\"" "$OUT"
+run upgrade --dry-run; check "upgrade --dry-run ничего не ставит" [ "$(cat "$R/var/lib/creeper/installed/aaa/version")" = 1.0 ]
+run upgrade
+check "upgrade: код 0" [ $RC -eq 0 ]
+check "зависимость zzz обновлена раньше aaa" bash -c "[ \$(grep -n 'install zzz-2.0' '$R/var/log/creeper/history.log' | cut -d: -f1) -lt \$(grep -n 'install aaa-2.0' '$R/var/log/creeper/history.log' | cut -d: -f1) ]"
+check "zzz осталась зависимостью" grep -qx dep "$R/var/lib/creeper/installed/zzz/reason"
+mk aaa 3.0; rec aaa 3.0 "zzz"
+run hold aaa; check "hold" [ -e "$R/var/lib/creeper/installed/aaa/hold" ]
+run upgrade; check "замороженный не обновляется" [ "$(cat "$R/var/lib/creeper/installed/aaa/version")" = 2.0 ]
+check "upgrade говорит про заморозку" grep -q 'заморожен' <<<"$OUT"
+run list; check "list помечает замороженный" grep -q 'aaa.*(заморожен)' <<<"$OUT"
+run upgrade aaa; check "названный явно — обновляется" [ "$(cat "$R/var/lib/creeper/installed/aaa/version")" = 3.0 ]
+run unhold aaa; check "unhold" [ ! -e "$R/var/lib/creeper/installed/aaa/hold" ]
+
+echo "== 19. rollback"
+run rollback aaa 2.0
+check "rollback: код 0" [ $RC -eq 0 ]
+check "вернулась версия 2.0" bash -c "[ \"\$('$R/usr/bin/aaa')\" = 'aaa 2.0' ] && [ \$(cat '$R/var/lib/creeper/installed/aaa/version') = 2.0 ]"
+check "после отката заморожен" [ -e "$R/var/lib/creeper/installed/aaa/hold" ]
+run rollback aaa 9.9; check "нет такой версии — понятная ошибка" bash -c "[ $RC -ne 0 ] && grep -q 'в кэше нет' <<<\"\$0\"" "$OUT"
+run rollback zzz </dev/null; check "без терминала — самая свежая из прежних" [ "$(cat "$R/var/lib/creeper/installed/zzz/version")" = 1.0 ]
+
+echo "== 20. общий файл не удаляется вместе с одним из владельцев"
+reset_root; mk hello 1.0; rec hello 1.0 ""; "$C" install hello >/dev/null 2>&1
+mk twin 1.0 'install -Dm755 /dev/null $(DESTDIR)/usr/bin/hello'; rec twin 1.0 ""
+run install twin --force; check "--force ставит поверх" [ $RC -eq 0 ]
+run blow twin -y
+check "общий /usr/bin/hello остался" [ -e "$R/usr/bin/hello" ]
+check "свой файл twin удалён" [ ! -e "$R/usr/bin/twin" ]
+
+echo "== 21. смена локали между установкой и обновлением не ломает списки"
+reset_root
+mk loc 1.0 'for f in a-b a_b aB ab Ab "a b" a.b; do echo x > "$(DESTDIR)/usr/share/doc/loc-1.0/$$f"; done'; rec loc 1.0 ""
+LC_ALL=en_US.UTF-8 "$C" install loc >/dev/null 2>&1
+mk loc 1.1 'mkdir -p $(DESTDIR)/usr/share/keep; for f in a-b a_b aB ab Ab "a b" a.b; do echo x > "$(DESTDIR)/usr/share/keep/$$f"; done'
+sed -i 's#doc/loc-1.1#doc/loc-1.0#g' "$MK/loc-1.1/Makefile"; tar -C "$MK" -czf "$R/var/cache/creeper/sources/loc-1.1.tar.gz" loc-1.1
+rec loc 1.1 ""
+LC_ALL=C "$C" upgrade >/dev/null 2>&1
+check "после обновления в другой локали файлы на месте" bash -c "[ \$(ls '$R/usr/share/keep' | wc -l) -eq 7 ] && [ -f '$R/usr/share/doc/loc-1.0/READ ME.txt' ]"
+check "а лишние убраны" [ ! -e "$R/usr/share/doc/loc-1.0/a-b" ]
+LC_ALL=en_US.UTF-8 "$C" verify >/dev/null 2>&1; check "verify после смены локали" [ $? -eq 0 ]
+
+echo "== 22. Ctrl+C во время сборки: сборка останавливается, замок свободен"
+reset_root; mk slow 1.0; rec slow 1.0 ""
+sed -i 's/build()   { make; }/build()   { echo start; sleep 47; }/' "$R/var/lib/creeper/recipes/slow/recipe"
+python3 - "$C" <<'PY'
+import os, signal, subprocess, sys, time
+p = subprocess.Popen([sys.argv[1], "install", "slow"], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+time.sleep(4)
+os.killpg(p.pid, signal.SIGINT)      # как Ctrl+C в терминале: сигнал всей группе
+try: p.wait(10)
+except subprocess.TimeoutExpired: pass
+time.sleep(1)
+PY
+check "сборка не осталась в фоне" bash -c "! pgrep -f '^sleep 47' >/dev/null"
+pkill -f '^sleep 47' 2>/dev/null
+run blow nosuch -y; check "замок свободен" bash -c "! grep -q 'уже работает' <<<\"\$0\"" "$OUT"
+( "$C" install slow >/dev/null 2>&1 & echo $! > /tmp/ctest-pid ); sleep 4
+kill -TERM "$(cat /tmp/ctest-pid)"; sleep 2
+check "kill creeper останавливает и сборку" bash -c "! pgrep -f '^sleep 47' >/dev/null"
+pkill -f '^sleep 47' 2>/dev/null
+
+echo "== 23. свои пакеты: new, add, edit, lint, forget, sync"
+reset_root
+# исходники трёх видов
+S=/tmp/ctest-src; rm -rf "$S"; mkdir -p "$S/mfoo-1.2/src" "$S/cbar-0.3" "$S/abaz-2.0" "$S/plain-1.0"
+printf "project('mfoo','c')\nx = dependency('libworld')\ny = dependency('threads')\nz = dependency('nosuchlib-9')\n" > "$S/mfoo-1.2/meson.build"
+printf 'cmake_minimum_required(VERSION 3.5)\npkg_check_modules(W REQUIRED world>=1.0)\n' > "$S/cbar-0.3/CMakeLists.txt"
+printf '#!/bin/sh\n' > "$S/abaz-2.0/configure"
+printf 'all:\n\t@true\ninstall:\n\tinstall -Dm755 /dev/null $(DESTDIR)$(PREFIX)/bin/plain\n' > "$S/plain-1.0/Makefile"
+for d in mfoo-1.2 cbar-0.3 abaz-2.0 plain-1.0; do tar -C "$S" -czf "$S/$d.tar.gz" "$d"; done
+rec world 1.0 ""; mkdir -p "$R/var/lib/creeper/recipes/cmake"; printf 'name=cmake\nversion=4.0\nsource=()\npackage() { :; }\n' > "$R/var/lib/creeper/recipes/cmake/recipe"
+run new "file://$S/mfoo-1.2.tar.gz" --desc 'тест "кавычки" $HOME'
+L=$R/var/lib/creeper/local
+check "new: рецепт лёг в свои" [ -f "$L/mfoo/recipe" ]
+check "new: определил meson" grep -q 'meson setup' "$L/mfoo/recipe"
+check "new: имя и версия" bash -c "grep -qx 'name=mfoo' '$L/mfoo/recipe' && grep -qx 'version=1.2' '$L/mfoo/recipe'"
+check "new: \$version в ссылке" grep -q 'mfoo-\$version.tar.gz' "$L/mfoo/recipe"
+check "new: sha256 записан" grep -q "sha256=($(sha256sum "$S/mfoo-1.2.tar.gz" | cut -d' ' -f1))" "$L/mfoo/recipe"
+check "new: зависимость найдена по имени библиотеки" grep -qx 'depends=(world)' "$L/mfoo/recipe"
+check "new: ненайденная библиотека названа" grep -q 'не нашёл пакетов: nosuchlib-9' "$L/mfoo/recipe"
+check "new: описание с кавычками не ломает рецепт" bash -c "[ \"\$(. '$L/mfoo/recipe'; echo \"\$desc\")\" = 'тест \"кавычки\" \$HOME' ]"
+check "new: исходник уже в кэше" [ -s "$R/var/cache/creeper/sources/mfoo-1.2.tar.gz" ]
+run lint mfoo; check "new: рецепт проходит lint" [ $RC -eq 0 ]
+run new "file://$S/cbar-0.3.tar.gz"; check "new: cmake + зависимость cmake и world" grep -qx 'depends=(cmake world)' "$L/cbar/recipe"
+run new "file://$S/abaz-2.0.tar.gz"; check "new: autotools" grep -q './configure --prefix=/usr' "$L/abaz/recipe"
+run new "file://$S/plain-1.0.tar.gz" --name myplain --deps "world"
+check "new: --name и --deps" bash -c "grep -qx 'name=myplain' '$L/myplain/recipe' && grep -qx 'depends=(world)' '$L/myplain/recipe'"
+check "new: make" grep -q 'make PREFIX=/usr DESTDIR' "$L/myplain/recipe"
+run new "file://$S/plain-1.0.tar.gz" --name myplain; check "new: существующий не затирается молча" [ $RC -ne 0 ]
+mk world 1.0; run install myplain
+check "свой пакет собирается и ставится" [ -e "$R/usr/bin/plain" ]
+run search --local; check "search --local" bash -c "grep -q myplain <<<\"\$0\" && ! grep -q '^world' <<<\"\$0\"" "$OUT"
+run search plain; check "search помечает свой" grep -q 'свой' <<<"$OUT"
+run info myplain; check "info: свой рецепт" grep -q 'свой рецепт' <<<"$OUT"
+run cat myplain; check "cat" grep -q 'name=myplain' <<<"$OUT"
+# edit: правка рецепта из репозитория становится своей копией
+printf '#!/bin/sh\nsed -i "s/^version=1.0/version=1.5/" "$1"\n' > /tmp/ctest-ed; chmod +x /tmp/ctest-ed
+EDITOR=/tmp/ctest-ed "$C" edit world >/dev/null 2>&1
+check "edit: своя копия" grep -qx 'version=1.5' "$L/world/recipe"
+check "edit: рецепт репозитория не тронут" grep -qx 'version=1.0' "$R/var/lib/creeper/recipes/world/recipe"
+run outdated; check "свой рецепт главнее" grep -q 'world.*1.0-1 → 1.5-1' <<<"$OUT"
+printf '#!/bin/sh\ntrue\n' > /tmp/ctest-ed
+run forget world; EDITOR=/tmp/ctest-ed "$C" edit world >/dev/null 2>&1
+check "edit без изменений не плодит копию" [ ! -e "$L/world" ]
+# sync не трогает свои и убирает совпавшие
+mkdir -p "$REPO/st/recipes"; cp -r "$R/var/lib/creeper/recipes/." "$REPO/st/recipes/"; cp -r "$L/abaz" "$REPO/st/recipes/"
+sed -i 's/^version=1.0/version=7.7/' "$REPO/st/recipes/world/recipe"
+tar -C "$REPO/st" -czf "$REPO/recipes.tar.gz" recipes; : > "$REPO/index.txt"
+echo "BINREPO=file://$REPO" > "$R/etc/creeper.conf"
+EDITOR="sed -i s/^version=1.0/version=1.5/" "$C" edit world >/dev/null 2>&1
+run sync
+check "sync: код 0" [ $RC -eq 0 ]
+check "sync не тронул свой рецепт" grep -qx 'version=1.5' "$L/world/recipe"
+check "sync говорит, что действует свой" grep -q 'world: действует твой рецепт' <<<"$OUT"
+check "sync убрал свой рецепт, совпавший с репозиторием" [ ! -e "$L/abaz" ]
+run forget world; check "forget возвращает рецепт репозитория" bash -c "[ ! -e '$L/world' ] && '$C' info world | grep -q '7.7'"
+: > "$R/etc/creeper.conf"
+# lint и add
+B=/tmp/ctest-bad; mkdir -p "$B"
+printf 'name="bad name"\nversion=\nsource=(v1.0.tar.gz::http://x/v1.0.tar.gz http://y/v2.0.tar.gz)\ndepends=(nosuchdep)\nbuild() { :; }\n' > "$B/recipe"
+run lint "$B/recipe"
+check "lint: код ≠ 0" [ $RC -ne 0 ]
+check "lint: плохое имя" grep -q "имя 'bad name'" <<<"$OUT"
+check "lint: нет версии" grep -q 'нет version' <<<"$OUT"
+check "lint: нет package()" grep -q 'нет функции package' <<<"$OUT"
+check "lint: общее имя архива" grep -q "v2.0.tar.gz.*слишком общо" <<<"$OUT"
+check "lint: неизвестная зависимость" grep -q "зависимость 'nosuchdep'" <<<"$OUT"
+run add "$B/recipe"; check "add отвергает плохой рецепт" [ $RC -ne 0 ]
+printf 'name=good\nversion=1\ndesc="x"\nsource=()\nbuild() { :; }\npackage() { install -Dm644 /dev/null "$PKG/usr/share/good"; }\n' > "$B/recipe"
+run add "$B/recipe"; check "add принимает хороший" [ -f "$L/good/recipe" ]
+run install good; check "и он ставится" [ -e "$R/usr/share/good" ]
+OUT=$(cd /tmp && rm -rf /tmp/libfoo && RECIPES_OUT=/tmp "$C" new https://example.org/dl/libfoo-2.4.1.tar.xz --no-download 2>&1)
+check "new --no-download: заготовка без сети" grep -q 'раскомментируй' /tmp/libfoo/recipe
+run install mfo; check "опечатка в имени — подсказка похожих" grep -q 'может быть:.*mfoo' <<<"$OUT"
+
+echo "== 24. doctor, mark, rdeps, size, list, completion"
+reset_root; mk world 1.0; mk hello 1.0; rec world 1.0 ""; rec hello 1.0 "world"
+"$C" install hello >/dev/null 2>&1
+run doctor; check "doctor: чистая система" [ $RC -eq 0 ]
+run rdeps world; check "rdeps" grep -qx hello <<<"$OUT"
+run mark dep hello; run orphans; check "mark dep → сироты" bash -c "grep -qx hello <<<\"\$0\"" "$OUT"
+run mark explicit hello; run list --explicit; check "list --explicit" bash -c "grep -q '^hello' <<<\"\$0\" && ! grep -q '^world' <<<\"\$0\"" "$OUT"
+run list --deps; check "list --deps" bash -c "grep -q '^world' <<<\"\$0\" && ! grep -q '^hello' <<<\"\$0\"" "$OUT"
+run size; check "size" grep -q 'всего в 2 пакетах' <<<"$OUT"
+"$C" blow world --force -y >/dev/null 2>&1
+run doctor; check "doctor находит нарушенную зависимость" bash -c "[ $RC -ne 0 ] && grep -q 'hello требует world' <<<\"\$0\"" "$OUT"
+"$C" completion > /tmp/ctest-compl; check "completion — корректный bash" bash -n /tmp/ctest-compl
+check "completion дополняет команды и пакеты" bash -c ". /tmp/ctest-compl; COMP_WORDS=(sudo creeper ins); COMP_CWORD=2; _creeper; [ \"\${COMPREPLY[0]}\" = install ]"
+run help; check "help упоминает tui" grep -q 'creeper tui' <<<"$OUT"
+
+echo "== 25. zip-исходники и предупреждение о /usr/lib64"
+reset_root; Z=/tmp/ctest-zip; rm -rf "$Z"; mkdir -p "$Z/zipped-1.0"
+printf 'all:\n\t@true\ninstall:\n\tinstall -Dm644 /dev/null $(DESTDIR)/usr/lib64/libz.so\n' > "$Z/zipped-1.0/Makefile"
+( cd "$Z" && python3 -m zipfile -c "$R/var/cache/creeper/sources/zipped-1.0.zip" zipped-1.0 )
+rec zipped 1.0 ""; sed -i 's/zipped-\$version.tar.gz/zipped-$version.zip/' "$R/var/lib/creeper/recipes/zipped/recipe"
+run install zipped
+check "zip распакован и собран" [ -e "$R/usr/lib64/libz.so" ]
+check "предупреждение о /usr/lib64" grep -q '/usr/lib64' <<<"$OUT"
+
+echo "== 26. TUI (в псевдотерминале)"
+reset_root; mk world 1.0; mk hello 1.0; rec world 1.0 ""; rec hello 1.0 "world"; rec zeta 3.1 ""
+OUT=$(python3 "$(cd "$(dirname "$0")" && pwd)/tui_test.py" "$C" "$R" "file://$S/plain-1.0.tar.gz" 2>&1); RC=$?
+if [ $RC -eq 0 ]; then ok "сценарий TUI пройден"; else bad "сценарий TUI" "$OUT"; fi
+check "TUI: hello установлен клавишей i" [ -x "$R/usr/bin/hello" ]
+check "TUI: свой пакет создан мастером" [ -f "$R/var/lib/creeper/local/plain/recipe" ]
+check "TUI: свой пакет собран и установлен" [ -e "$R/usr/bin/plain" ]
 
 echo
 printf 'Итого: \e[32m%d прошло\e[0m, \e[31m%d упало\e[0m\n' "$PASS" "$FAIL"
