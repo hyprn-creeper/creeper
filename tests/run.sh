@@ -317,7 +317,7 @@ echo "== 23. свои пакеты: new, add, edit, lint, forget, sync"
 reset_root
 # исходники трёх видов
 S=/tmp/ctest-src; rm -rf "$S"; mkdir -p "$S/mfoo-1.2/src" "$S/cbar-0.3" "$S/abaz-2.0" "$S/plain-1.0"
-printf "project('mfoo','c')\nx = dependency('libworld')\ny = dependency('threads')\nz = dependency('nosuchlib-9')\n" > "$S/mfoo-1.2/meson.build"
+printf "project('mfoo','c')\nx = dependency('libworld')\ny = dependency('threads')\nz = dependency('nosuchlib-9')\no = dependency('cmake', required: get_option('extras'))\nn = dependency('nosuchopt', required : false)\n" > "$S/mfoo-1.2/meson.build"
 printf 'cmake_minimum_required(VERSION 3.5)\npkg_check_modules(W REQUIRED world>=1.0)\n' > "$S/cbar-0.3/CMakeLists.txt"
 printf '#!/bin/sh\n' > "$S/abaz-2.0/configure"
 printf 'all:\n\t@true\ninstall:\n\tinstall -Dm755 /dev/null $(DESTDIR)$(PREFIX)/bin/plain\n' > "$S/plain-1.0/Makefile"
@@ -332,6 +332,7 @@ check "new: \$version в ссылке" grep -q 'mfoo-\$version.tar.gz' "$L/mfoo/
 check "new: sha256 записан" grep -q "sha256=($(sha256sum "$S/mfoo-1.2.tar.gz" | cut -d' ' -f1))" "$L/mfoo/recipe"
 check "new: зависимость найдена по имени библиотеки" grep -qx 'depends=(world)' "$L/mfoo/recipe"
 check "new: ненайденная библиотека названа" grep -q 'не нашёл пакетов: nosuchlib-9' "$L/mfoo/recipe"
+check "new: необязательная зависимость — только в примечании" bash -c "grep -q '^# необязательные.*: cmake' '$L/mfoo/recipe' && ! grep -q nosuchopt '$L/mfoo/recipe'"
 check "new: описание с кавычками не ломает рецепт" bash -c "[ \"\$(. '$L/mfoo/recipe'; echo \"\$desc\")\" = 'тест \"кавычки\" \$HOME' ]"
 check "new: исходник уже в кэше" [ -s "$R/var/cache/creeper/sources/mfoo-1.2.tar.gz" ]
 run lint mfoo; check "new: рецепт проходит lint" [ $RC -eq 0 ]

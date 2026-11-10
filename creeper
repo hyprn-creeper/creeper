@@ -1232,7 +1232,7 @@ cmd_forget() {
 }
 
 # --- мастер нового пакета ---
-NEW_NAME=; NEW_VER=; NEW_DESC=; NEW_HOME=; NEW_DL=; NEW_FILE=; NEW_SRC=; NEW_SHA=; NEW_TYPE=; NEW_DEPS=; NEW_MISS=; NEW_NOTE=
+NEW_NAME=; NEW_VER=; NEW_DESC=; NEW_HOME=; NEW_DL=; NEW_FILE=; NEW_SRC=; NEW_SHA=; NEW_TYPE=; NEW_DEPS=; NEW_OPT=; NEW_MISS=; NEW_NOTE=
 NEW_TYPES="autotools autoreconf meson cmake make cargo go python file custom"
 
 GH_TAG=; GH_DESC=
@@ -1308,20 +1308,29 @@ detect_build() { # каталог исходников → способ сбор
   else echo custom; fi
 }
 
-new_deps() { # new_deps <каталог> — библиотеки, которые ищет сборка → NEW_DEPS (пакеты), NEW_MISS (не нашлись)
-  local top=$1 mods m c pkg own r
-  local -A lc=() got=()
+new_deps() { # new_deps <каталог> — библиотеки, которые ищет сборка → NEW_DEPS, NEW_OPT (необязательные), NEW_MISS (не нашлись)
+  local top=$1 mods m c pkg own r tag
+  local -A lc=() got=() opt=() need=()
+  # строки "R имя" (обязательная) / "O имя" (сборка обойдётся): модули pkg-config из meson, autotools, cmake, make
   mods=$( {
-    find "$top" -maxdepth 3 -name meson.build -exec grep -ohE "dependency\([[:space:]]*'[^']+'" {} + 2>/dev/null | sed -E "s/.*'([^']+)'/\1/"
+    find "$top" -maxdepth 3 -name meson.build -exec cat {} + 2>/dev/null | awk -v q="'" '{
+      i=index($0,"dependency("); if (!i) next
+      n=split(substr($0,i),a,q); if (n<3) next
+      print (($0 ~ /required[ \t]*:/ && $0 !~ /required[ \t]*:[ \t]*true/) ? "O" : "R"), a[2] }'
     find "$top" -maxdepth 2 \( -name configure.ac -o -name configure.in \) -exec cat {} + 2>/dev/null | tr '\n' ' ' |
-      grep -oE 'PKG_CHECK_(MODULES|EXISTS)\(\[?[A-Za-z0-9_]+\]?,[^,)]+' | sed -E 's/^[^,]+,//' | tr ' []' '\n\n\n'
+      grep -oE 'PKG_CHECK_(MODULES|EXISTS)\(\[?[A-Za-z0-9_]+\]?,[^,)]+' | sed -E 's/^[^,]+,//' | tr ' []' '\n\n\n' | sed 's/^/R /'
     find "$top" -maxdepth 2 -name CMakeLists.txt -exec cat {} + 2>/dev/null | tr '\n' ' ' |
-      grep -oiE 'pkg_check_modules\([^)]*\)' | sed -E 's/^[^(]*\([[:space:]]*[A-Za-z0-9_]+//; s/\)$//' | tr ' \t' '\n\n' |
-      grep -vE '^(REQUIRED|QUIET|IMPORTED_TARGET|GLOBAL|NO_CMAKE_PATH|NO_CMAKE_ENVIRONMENT_PATH)$' | sed -E 's/[<>=].*//'
+      grep -oiE 'pkg_check_modules\([^)]*\)' | while IFS= read -r c; do
+        tag=O; case $c in *REQUIRED*) tag=R;; esac
+        printf '%s\n' "$c" | sed -E 's/^[^(]*\([[:space:]]*[A-Za-z0-9_]+//; s/\)$//' | tr ' \t' '\n\n' |
+          grep -vE '^(REQUIRED|QUIET|IMPORTED_TARGET|GLOBAL|NO_CMAKE_PATH|NO_CMAKE_ENVIRONMENT_PATH)$' | sed -E "s/[<>=].*//; s/^/$tag /"
+      done
     cat "$top"/Makefile "$top"/makefile "$top"/GNUmakefile "$top"/config.mk 2>/dev/null |
-      grep -oE 'pkg-config[^)`|;&]*' | tr ' \t' '\n\n' | grep -v '^pkg-config$'
-  } | grep -E '^[A-Za-z][A-Za-z0-9+._-]*$' | grep -vxE 'threads|dl|m|rt|openmp|intl|iconv|appleframeworks' | csort -u )
-  NEW_DEPS=; NEW_MISS=
+      grep -oE 'pkg-config[^)`|;&]*' | tr ' \t' '\n\n' | grep -v '^pkg-config$' | sed 's/^/R /'
+  } | grep -E '^[RO] [A-Za-z][A-Za-z0-9+._-]*$' | grep -vE ' (threads|dl|m|rt|openmp|intl|iconv|appleframeworks)$' | csort -u )
+  while read -r tag m; do [ -n "$m" ] || continue; if [ "$tag" = R ]; then need[$m]=1; fi; done <<<"$mods"
+  mods=$(printf '%s\n' "$mods" | cut -d' ' -f2 | csort -u)
+  NEW_DEPS=; NEW_OPT=; NEW_MISS=
   [ -n "$mods" ] || return 0
   for r in $(all_recipes); do lc[${r,,}]=$r; done
   own=$(owners_index "" | grep -E $'\t''/usr/(lib|share)/pkgconfig/[^/]+\.pc$')
@@ -1349,11 +1358,15 @@ new_deps() { # new_deps <каталог> — библиотеки, которы�
     fi
     if [ -z "$pkg" ]; then
       command -v pkg-config >/dev/null && pkg-config --exists "$m" 2>/dev/null && continue    # есть в базовой LFS
-      NEW_MISS+="$m "; continue
+      [ -n "${need[$m]:-}" ] && NEW_MISS+="$m "
+      continue
     fi
-    [ "$pkg" = "$NEW_NAME" ] || got[$pkg]=1
+    [ "$pkg" = "$NEW_NAME" ] && continue
+    if [ -n "${need[$m]:-}" ]; then got[$pkg]=1; else opt[$pkg]=1; fi
   done
+  for pkg in "${!got[@]}"; do unset "opt[$pkg]"; done
   NEW_DEPS=$(printf '%s\n' "${!got[@]}" | csort | tr '\n' ' '); NEW_DEPS=${NEW_DEPS% }; NEW_DEPS=${NEW_DEPS# }
+  NEW_OPT=$(printf '%s\n' "${!opt[@]}" | csort | tr '\n' ' '); NEW_OPT=${NEW_OPT% }; NEW_OPT=${NEW_OPT# }
   NEW_MISS=${NEW_MISS% }
 }
 
@@ -1490,6 +1503,7 @@ new_write() { # new_write <файл> — рецепт из NEW_*
   {
     printf 'name=%s\nversion=%s\nrelease=1\ndesc="%s"\nurl=%s\n' "$NEW_NAME" "$NEW_VER" "$d" "$NEW_HOME"
     printf 'source=(%s)\nsha256=(%s)\ndepends=(%s)\n' "$src" "$NEW_SHA" "$NEW_DEPS"
+    [ -n "$NEW_OPT" ] && printf '# необязательные зависимости (сборка обойдётся и без них): %s\n' "$NEW_OPT"
     [ -n "$NEW_MISS" ] && printf '# сборка ищет ещё библиотеки, для которых я не нашёл пакетов: %s\n' "$NEW_MISS"
     [ -n "$NEW_NOTE" ] && printf '# %s\n' "$NEW_NOTE"
     printf '# backup=(etc/%s.conf)      # конфиги, которые не надо затирать при обновлении\n\n' "$NEW_NAME"
@@ -1537,6 +1551,7 @@ cmd_new() {
 
   if [ -z "$yes" ]; then
     [ -n "$NEW_TYPE" ] && info "способ сборки: $CB$NEW_TYPE$CN${NEW_DEPS:+, нашёл зависимости: $NEW_DEPS}"
+    [ -n "$NEW_OPT" ] && info "необязательные (сборка обойдётся без них): $NEW_OPT"
     [ -n "$NEW_MISS" ] && warn "сборка ищет библиотеки, для которых нет пакетов: $NEW_MISS"
     [ -n "$NEW_NOTE" ] && warn "$NEW_NOTE"
     echo "Проверь и поправь (Enter — оставить как есть):"
@@ -2319,9 +2334,9 @@ tui_new() {
   ui_end
   say "изучаю $url"
   res=$(mktemp)
-  NEW_NAME=; NEW_VER=; NEW_DESC=; NEW_HOME=; NEW_DL=; NEW_FILE=; NEW_SRC=; NEW_SHA=; NEW_TYPE=; NEW_DEPS=; NEW_MISS=; NEW_NOTE=
+  NEW_NAME=; NEW_VER=; NEW_DESC=; NEW_HOME=; NEW_DL=; NEW_FILE=; NEW_SRC=; NEW_SHA=; NEW_TYPE=; NEW_DEPS=; NEW_OPT=; NEW_MISS=; NEW_NOTE=
   ( new_analyze "$url"
-    for i in NEW_NAME NEW_VER NEW_DESC NEW_HOME NEW_DL NEW_FILE NEW_SRC NEW_SHA NEW_TYPE NEW_DEPS NEW_MISS NEW_NOTE; do
+    for i in NEW_NAME NEW_VER NEW_DESC NEW_HOME NEW_DL NEW_FILE NEW_SRC NEW_SHA NEW_TYPE NEW_DEPS NEW_OPT NEW_MISS NEW_NOTE; do
       printf '%s=%q\n' "$i" "${!i}"; done > "$res" )
   rc=$?
   if [ $rc -ne 0 ] || [ ! -s "$res" ]; then
@@ -2339,6 +2354,7 @@ tui_new() {
       "Сборка:       ${NEW_TYPE:-заготовка (способ не определён)}"
       "-Исходники:    $NEW_SRC"
     )
+    [ -n "$NEW_OPT" ] && it+=("-необязательные (сборка обойдётся без них): $NEW_OPT")
     [ -n "$NEW_MISS" ] && it+=("-не нашёл пакетов для библиотек: $NEW_MISS")
     [ -n "$NEW_NOTE" ] && it+=("-$NEW_NOTE")
     it+=("-" "Сохранить и собрать здесь" "Сохранить и собрать на ферме (GitHub)" "Сохранить и открыть в редакторе" "Только сохранить рецепт" "Отмена")
