@@ -430,6 +430,12 @@ plan_method() { # local | remote | source
   local p=$1 ver rel; ver=$(meta "$p" version); rel=$(pkgrel "$p")
   [ -n "${SOURCE_ONLY:-}" ] && { echo source; return; }
   [ -n "${REBUILD:-}" ] && [ -n "${TARGET[$p]:-}" ] && { echo source; return; }
+  if is_local "$p"; then
+    # свой рецепт: бинарник годится, только если собран именно по нему (а не по рецепту из репозитория)
+    local bf=$BINCACHE/$(binfile "$p" "$ver" "$rel")
+    [ -s "$bf" ] && tar --zstd -xOf "$bf" --wildcards '*.CREEPER/recipe' 2>/dev/null | cmp -s - "$(recipe_file "$p")" && { echo local; return; }
+    echo source; return
+  fi
   [ -s "$BINCACHE/$(binfile "$p" "$ver" "$rel")" ] && { echo local; return; }
   [ -n "$(bin_entry "$p" "$ver" "$rel")" ] && { echo remote; return; }
   echo source
@@ -991,6 +997,10 @@ cmd_outdated() {
   return 0
 }
 
+pkg_bytes() { # размер файлов пакета в байтах (жёсткие ссылки — один раз)
+  sed "s|^|$ROOT|" "$DB/$1/files" | xargs -d '\n' -r stat -c '%d:%i %s' 2>/dev/null | awk '!seen[$1]++{s+=$2} END{print s+0}'
+}
+
 cmd_rdeps() {
   local p=${1:?укажи пакет} r
   installed "$p" || die "'$p' не установлен"
@@ -1003,7 +1013,7 @@ cmd_size() {
   [[ $n =~ ^[0-9]+$ ]] || die "creeper size [сколько строк]"
   for d in "$DB"/*/; do
     p=$(basename "$d"); [ -f "$d/files" ] || continue
-    printf '%s %s\n' "$(sed "s|^|$ROOT|" "$d/files" | xargs -d '\n' -r stat -c %s 2>/dev/null | awk '{s+=$1} END{print s+0}')" "$p"
+    printf '%s %s\n' "$(pkg_bytes "$p")" "$p"
   done | LC_ALL=C sort -rn | awk -v n="$n" '
     {t+=$1; if (NR<=n) printf "%9.1f МБ  %s\n", $1/1048576, $2}
     END{printf "%9.1f МБ  всего в %d пакетах\n", t/1048576, NR}'
@@ -1281,6 +1291,7 @@ new_parse_url() { # ссылка → NEW_NAME NEW_VER NEW_DL NEW_FILE NEW_HOME (
     NEW_DL=$url; NEW_FILE=$f
     [[ $url =~ ^(https?://github\.com/[^/]+/[^/]+)/ ]] && NEW_HOME=${BASH_REMATCH[1]}
   fi
+
   new_srcline
 }
 
@@ -1303,7 +1314,7 @@ new_deps() { # new_deps <каталог> — библиотеки, которы�
   mods=$( {
     find "$top" -maxdepth 3 -name meson.build -exec grep -ohE "dependency\([[:space:]]*'[^']+'" {} + 2>/dev/null | sed -E "s/.*'([^']+)'/\1/"
     find "$top" -maxdepth 2 \( -name configure.ac -o -name configure.in \) -exec cat {} + 2>/dev/null | tr '\n' ' ' |
-      grep -oE 'PKG_CHECK_MODULES\(\[?[A-Za-z0-9_]+\]?,[^)]+' | sed -E 's/^[^,]+,//' | tr ' ,[]' '\n\n\n\n'
+      grep -oE 'PKG_CHECK_(MODULES|EXISTS)\(\[?[A-Za-z0-9_]+\]?,[^,)]+' | sed -E 's/^[^,]+,//' | tr ' []' '\n\n\n'
     find "$top" -maxdepth 2 -name CMakeLists.txt -exec cat {} + 2>/dev/null | tr '\n' ' ' |
       grep -oiE 'pkg_check_modules\([^)]*\)' | sed -E 's/^[^(]*\([[:space:]]*[A-Za-z0-9_]+//; s/\)$//' | tr ' \t' '\n\n' |
       grep -vE '^(REQUIRED|QUIET|IMPORTED_TARGET|GLOBAL|NO_CMAKE_PATH|NO_CMAKE_ENVIRONMENT_PATH)$' | sed -E 's/[<>=].*//'
@@ -1350,6 +1361,12 @@ new_analyze() { # new_analyze <ссылка> [nodl] — разобрать сс�
   local t f top; local -a dirs
   new_parse_url "$1"
   [ -n "${2:-}" ] && return 0
+  # описание проекта с GitHub (для прямых ссылок на архив)
+  if [ -z "$NEW_DESC" ] && [[ $NEW_HOME =~ ^https?://github\.com/([^/]+/[^/]+)$ ]] && command -v python3 >/dev/null; then
+    NEW_DESC=$(curl -fsSL --connect-timeout 8 "$FARM_API/repos/${BASH_REMATCH[1]}" 2>/dev/null | python3 -c 'import json,sys
+try: print((json.load(sys.stdin).get("description") or "").replace("\n"," "))
+except Exception: pass' 2>/dev/null)
+  fi
   t=$(mktemp -d)
   if [ -n "$NEW_NAME" ] && mkdir -p "$SOURCES" 2>/dev/null && [ -w "$SOURCES" ]; then f=$SOURCES/$NEW_FILE; else f=$t/$NEW_FILE; fi
   if [ ! -s "$f" ]; then
@@ -1869,7 +1886,10 @@ cmd_search() {
     [ "${MLOC[$n]}" = 1 ] && mark+="${mark:+ }${CB}[свой]${CN}"
     printf '%-18s %-12s %s %s\n' "$n" "${MV[$n]}" "${MDESC[$n]}" "$mark"; hits=$((hits+1))
   done
-  [ $hits -gt 0 ] || info "ничего не нашлось${q:+ по слову '$q'} (обновить рецепты: sudo creeper sync)"
+  if [ $hits -eq 0 ]; then
+    if [ "$only" = local ]; then info "своих рецептов нет (создать: sudo creeper new)"
+    else info "ничего не нашлось${q:+ по слову '$q'} (обновить рецепты: sudo creeper sync)"; fi
+  fi
   return 0
 }
 
@@ -1890,7 +1910,7 @@ cmd_info() {
   fi
   if installed "$p"; then
     local sz
-    sz=$(sed "s|^|$ROOT|" "$DB/$p/files" | xargs -d '\n' stat -c %s 2>/dev/null | awk '{s+=$1} END{printf "%.1f МБ", s/1048576}')
+    sz=$(pkg_bytes "$p" | awk '{printf "%.1f МБ", $1/1048576}')
     echo "  установлен:  $(inst_version "$p")-$(inst_release "$p") ($(cat "$DB/$p/date")), $(cat "$DB/$p/reason" 2>/dev/null || echo explicit)$(held "$p" && echo ", заморожен")"
     echo "  файлов:      $(wc -l < "$DB/$p/files"), размер $sz"
     local r; r=$(rdeps "$p" | tr '\n' ' '); echo "  нужен для:   ${r:--}"

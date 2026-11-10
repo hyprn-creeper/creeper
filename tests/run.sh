@@ -356,6 +356,13 @@ run outdated; check "свой рецепт главнее" grep -q 'world.*1.0-1
 printf '#!/bin/sh\ntrue\n' > /tmp/ctest-ed
 run forget world; EDITOR=/tmp/ctest-ed "$C" edit world >/dev/null 2>&1
 check "edit без изменений не плодит копию" [ ! -e "$L/world" ]
+# правка рецепта без смены версии: готовый бинарник от прежнего рецепта не годится
+printf '#!/bin/sh\necho "# правка" >> "$1"\n' > /tmp/ctest-ed
+EDITOR=/tmp/ctest-ed "$C" edit world >/dev/null 2>&1
+run install --reinstall world; check "после правки --reinstall пересобирает" grep -q 'world\S*сборка' <<<"$OUT"
+run install --reinstall world; check "а без правок берёт свой бинарник из кэша" grep -q 'world\S*кэш' <<<"$OUT"
+run forget world; "$C" install --reinstall world >/dev/null 2>&1
+printf '#!/bin/sh\ntrue\n' > /tmp/ctest-ed
 # sync не трогает свои и убирает совпавшие
 mkdir -p "$REPO/st/recipes"; cp -r "$R/var/lib/creeper/recipes/." "$REPO/st/recipes/"; cp -r "$L/abaz" "$REPO/st/recipes/"
 sed -i 's/^version=1.0/version=7.7/' "$REPO/st/recipes/world/recipe"
